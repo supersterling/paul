@@ -16,8 +16,13 @@ async function connectSandbox(sandboxId: string, logger: InngestLogger): Promise
 		})
 		throw new NonRetriableError(`sandbox connection failed: ${String(result.error)}`)
 	}
-	logger.info("sandbox connected", { sandboxId: result.data.sandboxId })
-	return result.data
+	const sbx = result.data
+	if (sbx.status !== "running" && sbx.status !== "pending") {
+		logger.error("sandbox not usable", { sandboxId, status: sbx.status })
+		throw new NonRetriableError(`sandbox not usable: status is '${sbx.status}'`)
+	}
+	logger.info("sandbox connected", { sandboxId: sbx.sandboxId, status: sbx.status })
+	return sbx
 }
 
 export { connectSandbox }
