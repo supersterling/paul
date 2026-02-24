@@ -194,7 +194,9 @@ async function selectApproach(ctx: {
 	{ ok: true; selected: unknown } | { ok: false; failure: { status: "failed"; reason: string } }
 > {
 	const { approachesOutput, approachesPhaseResultId, runId, sandboxId, step, logger } = ctx
-	const ctaId = crypto.randomUUID()
+	const ctaId = await step.run("gen-cta-id-approaches", function genCtaId() {
+		return crypto.randomUUID()
+	})
 	const approachCount = approachesOutput.approaches.length
 
 	if (approachCount < 2) {
@@ -279,9 +281,8 @@ const featureRunFunction = inngest.createFunction(
 	{ event: "paul/pipeline/feature-run" },
 	async ({ event, logger, step }) => {
 		const { prompt, githubRepoUrl, githubBranch, runtime } = event.data
-		const runId = crypto.randomUUID()
 
-		logger.info("starting feature run", { runId, githubRepoUrl, githubBranch, runtime })
+		logger.info("starting feature run", { githubRepoUrl, githubBranch, runtime })
 
 		// -----------------------------------------------------------------------
 		// 1. Create sandbox
@@ -300,7 +301,7 @@ const featureRunFunction = inngest.createFunction(
 
 		const sandboxId = sandboxResult.sandboxId
 
-		logger.info("sandbox created", { runId, sandboxId })
+		logger.info("sandbox created", { sandboxId })
 
 		// -----------------------------------------------------------------------
 		// 2. Persist sandbox + feature run records
@@ -319,26 +320,31 @@ const featureRunFunction = inngest.createFunction(
 			})
 		})
 
-		await step.run("create-feature-run", async function createRun() {
+		const runId = await step.run("create-feature-run", async function createRun() {
+			const id = crypto.randomUUID()
 			await createFeatureRun(db, {
-				id: runId,
+				id,
 				prompt,
 				sandboxId,
 				githubRepoUrl,
 				githubBranch,
 				currentPhase: "analysis"
 			})
+			return id
 		})
 
 		// -----------------------------------------------------------------------
 		// 3. Analysis phase
 		// -----------------------------------------------------------------------
 
-		const analysisPhaseResultId = crypto.randomUUID()
-
-		await step.run("create-phase-analysis", async function createAnalysisPhase() {
-			await createPhaseResult(db, { id: analysisPhaseResultId, runId, phase: "analysis" })
-		})
+		const analysisPhaseResultId = await step.run(
+			"create-phase-analysis",
+			async function createAnalysisPhase() {
+				const id = crypto.randomUUID()
+				await createPhaseResult(db, { id, runId, phase: "analysis" })
+				return id
+			}
+		)
 
 		const analysisMemories = await readMemoriesFromDb(runId, "read-memories-analysis", step, logger)
 
@@ -363,7 +369,9 @@ const featureRunFunction = inngest.createFunction(
 			await updateFeatureRunPhase(db, runId, "approaches")
 		})
 
-		const analysisCtaId = crypto.randomUUID()
+		const analysisCtaId = await step.run("gen-cta-id-analysis", function genCtaId() {
+			return crypto.randomUUID()
+		})
 		const analysisCtaResponse = await emitCtaAndWait(
 			analysisCtaId,
 			{
@@ -385,11 +393,14 @@ const featureRunFunction = inngest.createFunction(
 		// 4. Approaches phase
 		// -----------------------------------------------------------------------
 
-		const approachesPhaseResultId = crypto.randomUUID()
-
-		await step.run("create-phase-approaches", async function createApproachesPhase() {
-			await createPhaseResult(db, { id: approachesPhaseResultId, runId, phase: "approaches" })
-		})
+		const approachesPhaseResultId = await step.run(
+			"create-phase-approaches",
+			async function createApproachesPhase() {
+				const id = crypto.randomUUID()
+				await createPhaseResult(db, { id, runId, phase: "approaches" })
+				return id
+			}
+		)
 
 		const approachesMemories = await readMemoriesFromDb(
 			runId,
@@ -455,11 +466,14 @@ const featureRunFunction = inngest.createFunction(
 		// 5. Judging phase
 		// -----------------------------------------------------------------------
 
-		const judgingPhaseResultId = crypto.randomUUID()
-
-		await step.run("create-phase-judging", async function createJudgingPhase() {
-			await createPhaseResult(db, { id: judgingPhaseResultId, runId, phase: "judging" })
-		})
+		const judgingPhaseResultId = await step.run(
+			"create-phase-judging",
+			async function createJudgingPhase() {
+				const id = crypto.randomUUID()
+				await createPhaseResult(db, { id, runId, phase: "judging" })
+				return id
+			}
+		)
 
 		const judgingMemories = await readMemoriesFromDb(runId, "read-memories-judging", step, logger)
 
@@ -493,7 +507,9 @@ const featureRunFunction = inngest.createFunction(
 			await updateFeatureRunPhase(db, runId, "implementation")
 		})
 
-		const judgingCtaId = crypto.randomUUID()
+		const judgingCtaId = await step.run("gen-cta-id-judging", function genCtaId() {
+			return crypto.randomUUID()
+		})
 		const judgingCtaResponse = await emitCtaAndWait(
 			judgingCtaId,
 			{
@@ -515,11 +531,14 @@ const featureRunFunction = inngest.createFunction(
 		// 6. Implementation phase
 		// -----------------------------------------------------------------------
 
-		const implPhaseResultId = crypto.randomUUID()
-
-		await step.run("create-phase-implementation", async function createImplPhase() {
-			await createPhaseResult(db, { id: implPhaseResultId, runId, phase: "implementation" })
-		})
+		const implPhaseResultId = await step.run(
+			"create-phase-implementation",
+			async function createImplPhase() {
+				const id = crypto.randomUUID()
+				await createPhaseResult(db, { id, runId, phase: "implementation" })
+				return id
+			}
+		)
 
 		const implMemories = await readMemoriesFromDb(
 			runId,
@@ -559,7 +578,9 @@ const featureRunFunction = inngest.createFunction(
 			await updateFeatureRunPhase(db, runId, "pr")
 		})
 
-		const implCtaId = crypto.randomUUID()
+		const implCtaId = await step.run("gen-cta-id-implementation", function genCtaId() {
+			return crypto.randomUUID()
+		})
 		const implCtaResponse = await emitCtaAndWait(
 			implCtaId,
 			{
@@ -581,10 +602,10 @@ const featureRunFunction = inngest.createFunction(
 		// 7. PR creation
 		// -----------------------------------------------------------------------
 
-		const prPhaseResultId = crypto.randomUUID()
-
-		await step.run("create-phase-pr", async function createPrPhase() {
-			await createPhaseResult(db, { id: prPhaseResultId, runId, phase: "pr" })
+		const prPhaseResultId = await step.run("create-phase-pr", async function createPrPhase() {
+			const id = crypto.randomUUID()
+			await createPhaseResult(db, { id, runId, phase: "pr" })
+			return id
 		})
 
 		const prResult = await step.run("create-pr", async function createPrStep() {
