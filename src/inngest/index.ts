@@ -136,7 +136,7 @@ const inngestLogger: Logger = {
 }
 
 const inngest = new Inngest({
-	id: "superstarter",
+	id: "paul",
 	checkpointing: true,
 	schemas: new EventSchemas().fromSchema(schema),
 	logger: inngestLogger,
