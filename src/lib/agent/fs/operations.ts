@@ -75,7 +75,7 @@ function buildFindArgs(dirPath: string, pattern: string): string[] {
 			`pattern '${pattern}' contains '/'; use dirPath to scope instead`
 		)
 	}
-	return [dirPath, "-maxdepth", "1", "-type", "f", "-name", pattern, "-printf", "%p\\t%s\\n"]
+	return [dirPath, "-type", "f", "-name", pattern, "-printf", "%p\\t%s\\n"]
 }
 
 function parseGlobLine(line: string, basePath: string): GlobMatch {
