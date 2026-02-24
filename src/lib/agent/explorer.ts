@@ -2,7 +2,7 @@ import { openai } from "@ai-sdk/openai"
 import { globTool, grepTool, readTool } from "@/lib/agent/fs/tools"
 import type { AgentStepResult } from "@/lib/agent/step"
 
-const MAX_STEPS = 20 as const
+const MAX_STEPS = 50 as const
 
 const model = openai("gpt-5-nano")
 
@@ -23,7 +23,14 @@ const instructions = [
 	"- Start with glob to understand directory structure",
 	"- Use grep to find relevant code by pattern",
 	"- Read specific files to understand implementation details",
-	"Provide a clear, structured answer with file paths and relevant code excerpts."
+	"",
+	"CRITICAL: You MUST end with a final text response summarizing your findings.",
+	"Do NOT end your turn with a tool call. After you have gathered enough information,",
+	"stop calling tools and write a structured text summary answering the question you were asked.",
+	"You have a limited number of steps — budget your tool calls and leave room for the summary.",
+	"If you are running low on steps, stop investigating and summarize what you have so far.",
+	"",
+	"Your summary should be structured with clear sections, file paths, and relevant code excerpts."
 ].join("\n")
 
 type ExplorerTools = typeof tools
