@@ -1,6 +1,6 @@
 import * as errors from "@superbuilders/errors"
 import type { ToolResultPart } from "ai"
-import { tool } from "ai"
+import { generateObject, tool } from "ai"
 import type { Logger } from "inngest"
 import { z } from "zod"
 import { db } from "@/db"
@@ -165,58 +165,6 @@ function buildAnalysisSystemPrompt(ctx: {
 	return sections.join("\n")
 }
 
-type ParseLogger = {
-	warn: (msg: string, ctx?: Record<string, unknown>) => void
-	error: (msg: string, ctx?: Record<string, unknown>) => void
-}
-
-function parseAnalysisOutput(text: string, logger: ParseLogger): AnalysisOutput {
-	const trimmed = text.trim()
-
-	const jsonMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/)
-	const captured = jsonMatch ? jsonMatch[1] : undefined
-	const jsonText = captured ? captured.trim() : trimmed
-
-	const parseResult = errors.trySync(function parseJson() {
-		return JSON.parse(jsonText)
-	})
-	if (parseResult.error) {
-		logger.warn("analysis output json parse failed, attempting extraction", {
-			error: parseResult.error
-		})
-		const braceStart = trimmed.indexOf("{")
-		const braceEnd = trimmed.lastIndexOf("}")
-		if (braceStart === -1) {
-			logger.error("no json object found in analysis output", { error: parseResult.error })
-			throw errors.wrap(parseResult.error, "analysis output json parse")
-		}
-		const extracted = trimmed.slice(braceStart, braceEnd + 1)
-		const retryResult = errors.trySync(function retryParse() {
-			return JSON.parse(extracted)
-		})
-		if (retryResult.error) {
-			logger.error("analysis output json retry parse failed", { error: retryResult.error })
-			throw errors.wrap(retryResult.error, "analysis output json retry parse")
-		}
-		const retryValidation = AnalysisOutputSchema.safeParse(retryResult.data)
-		if (!retryValidation.success) {
-			logger.error("analysis output schema validation retry failed", {
-				error: retryValidation.error
-			})
-			throw errors.wrap(retryValidation.error, "analysis output schema validation retry")
-		}
-		return retryValidation.data
-	}
-
-	const validation = AnalysisOutputSchema.safeParse(parseResult.data)
-	if (!validation.success) {
-		logger.error("analysis output schema validation failed", { error: validation.error })
-		throw errors.wrap(validation.error, "analysis output schema validation")
-	}
-
-	return validation.data
-}
-
 async function handleSpawnSubagent(
 	toolCall: StaticToolCallGeneric,
 	github: { repoUrl: string; branch: string },
@@ -348,8 +296,19 @@ const analysisFunction = inngest.createFunction(
 			})
 		}
 
-		const output = await step.run("validate-output", function validateOutput() {
-			return parseAnalysisOutput(result.text, logger)
+		const output = await step.run("validate-output", async function validateOutput() {
+			const extractResult = await errors.try(
+				generateObject({
+					model,
+					schema: AnalysisOutputSchema,
+					prompt: `Extract the analysis findings from this output. Return ONLY the structured data.\n\n${result.text}`
+				})
+			)
+			if (extractResult.error) {
+				logger.error("analysis structured extraction failed", { error: extractResult.error })
+				throw errors.wrap(extractResult.error, "analysis structured extraction")
+			}
+			return extractResult.data.object
 		})
 
 		logger.info("analysis phase complete", {

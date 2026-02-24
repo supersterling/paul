@@ -1,6 +1,6 @@
 import * as errors from "@superbuilders/errors"
 import type { Sandbox } from "@vercel/sandbox"
-import { tool } from "ai"
+import { generateObject, tool } from "ai"
 import type { Logger } from "inngest"
 import { z } from "zod"
 import { db } from "@/db"
@@ -186,58 +186,6 @@ function buildRejectionReason(findings: Finding[]): string | undefined {
 	}
 
 	return undefined
-}
-
-// ---------------------------------------------------------------------------
-// JSON parsing
-// ---------------------------------------------------------------------------
-
-function parseJudgeOutput(
-	text: string,
-	logger: { warn: (msg: string, ctx?: Record<string, unknown>) => void }
-): z.infer<typeof JudgeRawOutputSchema> {
-	const trimmed = text.trim()
-
-	const jsonMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/)
-	const captured = jsonMatch ? jsonMatch[1] : undefined
-	const jsonText = captured ? captured.trim() : trimmed
-
-	const parseResult = errors.trySync(function parseJson() {
-		return JSON.parse(jsonText)
-	})
-	if (parseResult.error) {
-		logger.warn("judge output json parse failed, attempting extraction", {
-			error: parseResult.error
-		})
-		const braceStart = trimmed.indexOf("{")
-		const braceEnd = trimmed.lastIndexOf("}")
-		if (braceStart === -1) {
-			logger.warn("judge output has no json object", { error: parseResult.error })
-			throw errors.wrap(parseResult.error, "judge output json parse")
-		}
-		const extracted = trimmed.slice(braceStart, braceEnd + 1)
-		const retryResult = errors.trySync(function retryParse() {
-			return JSON.parse(extracted)
-		})
-		if (retryResult.error) {
-			logger.warn("judge output json retry parse failed", { error: retryResult.error })
-			throw errors.wrap(retryResult.error, "judge output json retry parse")
-		}
-		const retryValidation = JudgeRawOutputSchema.safeParse(retryResult.data)
-		if (!retryValidation.success) {
-			logger.warn("judge output schema validation retry failed", { error: retryValidation.error })
-			throw errors.wrap(retryValidation.error, "judge output schema validation retry")
-		}
-		return retryValidation.data
-	}
-
-	const validation = JudgeRawOutputSchema.safeParse(parseResult.data)
-	if (!validation.success) {
-		logger.warn("judge output schema validation failed", { error: validation.error })
-		throw errors.wrap(validation.error, "judge output schema validation")
-	}
-
-	return validation.data
 }
 
 // ---------------------------------------------------------------------------
@@ -442,21 +390,36 @@ const judgingFunction = inngest.createFunction(
 			})
 		}
 
-		const output = await step.run("derive-verdict", function deriveVerdictStep(): JudgingOutput {
-			const judgeRaw = parseJudgeOutput(result.text, logger)
-			const verdict = deriveVerdict(judgeRaw.findings)
-			const conditions = buildConditions(judgeRaw.findings)
-			const rejectionReason = buildRejectionReason(judgeRaw.findings)
+		const output = await step.run(
+			"derive-verdict",
+			async function deriveVerdictStep(): Promise<JudgingOutput> {
+				const extractResult = await errors.try(
+					generateObject({
+						model,
+						schema: JudgeRawOutputSchema,
+						prompt: `Extract the judge findings and assessment from this review output. Return ONLY the structured data.\n\n${result.text}`
+					})
+				)
+				if (extractResult.error) {
+					logger.error("judge structured extraction failed", { error: extractResult.error })
+					throw errors.wrap(extractResult.error, "judge structured extraction")
+				}
 
-			return {
-				selectedApproachId,
-				findings: judgeRaw.findings,
-				overallVerdict: verdict,
-				conditions,
-				rejectionReason,
-				overallAssessment: judgeRaw.overallAssessment
+				const judgeRaw = extractResult.data.object
+				const verdict = deriveVerdict(judgeRaw.findings)
+				const conditions = buildConditions(judgeRaw.findings)
+				const rejectionReason = buildRejectionReason(judgeRaw.findings)
+
+				return {
+					selectedApproachId,
+					findings: judgeRaw.findings,
+					overallVerdict: verdict,
+					conditions,
+					rejectionReason,
+					overallAssessment: judgeRaw.overallAssessment
+				}
 			}
-		})
+		)
 
 		logger.info("judging phase complete", {
 			runId,

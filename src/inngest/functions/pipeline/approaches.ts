@@ -1,6 +1,6 @@
 import * as errors from "@superbuilders/errors"
 import type { ToolResultPart } from "ai"
-import { tool } from "ai"
+import { generateObject, tool } from "ai"
 import type { Logger } from "inngest"
 import { z } from "zod"
 import { db } from "@/db"
@@ -186,58 +186,6 @@ function buildApproachesSystemPrompt(ctx: {
 	return sections.join("\n")
 }
 
-type ParseLogger = {
-	warn: (msg: string, ctx?: Record<string, unknown>) => void
-	error: (msg: string, ctx?: Record<string, unknown>) => void
-}
-
-function parseApproachesOutput(text: string, logger: ParseLogger): ApproachesOutput {
-	const trimmed = text.trim()
-
-	const jsonMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/)
-	const captured = jsonMatch ? jsonMatch[1] : undefined
-	const jsonText = captured ? captured.trim() : trimmed
-
-	const parseResult = errors.trySync(function parseJson() {
-		return JSON.parse(jsonText)
-	})
-	if (parseResult.error) {
-		logger.warn("approaches output json parse failed, attempting extraction", {
-			error: parseResult.error
-		})
-		const braceStart = trimmed.indexOf("{")
-		const braceEnd = trimmed.lastIndexOf("}")
-		if (braceStart === -1) {
-			logger.error("no json object found in approaches output", { error: parseResult.error })
-			throw errors.wrap(parseResult.error, "approaches output json parse")
-		}
-		const extracted = trimmed.slice(braceStart, braceEnd + 1)
-		const retryResult = errors.trySync(function retryParse() {
-			return JSON.parse(extracted)
-		})
-		if (retryResult.error) {
-			logger.error("approaches output json retry parse failed", { error: retryResult.error })
-			throw errors.wrap(retryResult.error, "approaches output json retry parse")
-		}
-		const retryValidation = ApproachesOutputSchema.safeParse(retryResult.data)
-		if (!retryValidation.success) {
-			logger.error("approaches output schema validation retry failed", {
-				error: retryValidation.error
-			})
-			throw errors.wrap(retryValidation.error, "approaches output schema validation retry")
-		}
-		return retryValidation.data
-	}
-
-	const validation = ApproachesOutputSchema.safeParse(parseResult.data)
-	if (!validation.success) {
-		logger.error("approaches output schema validation failed", { error: validation.error })
-		throw errors.wrap(validation.error, "approaches output schema validation")
-	}
-
-	return validation.data
-}
-
 async function handleSpawnSubagent(
 	toolCall: StaticToolCallGeneric,
 	step: InngestStep,
@@ -365,8 +313,19 @@ const approachesFunction = inngest.createFunction(
 			})
 		}
 
-		const output = await step.run("validate-output", function validateOutput() {
-			return parseApproachesOutput(result.text, logger)
+		const output = await step.run("validate-output", async function validateOutput() {
+			const extractResult = await errors.try(
+				generateObject({
+					model,
+					schema: ApproachesOutputSchema,
+					prompt: `Extract the implementation approaches from this output. Return ONLY the structured data.\n\n${result.text}`
+				})
+			)
+			if (extractResult.error) {
+				logger.error("approaches structured extraction failed", { error: extractResult.error })
+				throw errors.wrap(extractResult.error, "approaches structured extraction")
+			}
+			return extractResult.data.object
 		})
 
 		logger.info("approaches phase complete", {
