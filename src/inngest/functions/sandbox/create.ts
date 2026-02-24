@@ -4,7 +4,7 @@ import { NonRetriableError } from "inngest"
 import { env } from "@/env"
 import { inngest } from "@/inngest"
 
-const SANDBOX_TIMEOUT_MS = 30 * 60 * 1000
+const SANDBOX_TIMEOUT_MS = 5 * 60 * 60 * 1000
 
 function buildCreateParams(
 	runtime: string,
