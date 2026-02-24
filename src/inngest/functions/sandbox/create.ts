@@ -4,12 +4,14 @@ import { NonRetriableError } from "inngest"
 import { env } from "@/env"
 import { inngest } from "@/inngest"
 
+const SANDBOX_TIMEOUT_MS = 30 * 60 * 1000
+
 function buildCreateParams(
 	runtime: string,
 	github?: { repoUrl: string; branch: string; token?: string }
 ) {
 	if (!github) {
-		return { runtime }
+		return { runtime, timeout: SANDBOX_TIMEOUT_MS }
 	}
 
 	const { repoUrl, branch } = github
@@ -18,6 +20,7 @@ function buildCreateParams(
 	if (token) {
 		return {
 			runtime,
+			timeout: SANDBOX_TIMEOUT_MS,
 			source: {
 				type: "git" as const,
 				url: repoUrl,
@@ -31,6 +34,7 @@ function buildCreateParams(
 
 	return {
 		runtime,
+		timeout: SANDBOX_TIMEOUT_MS,
 		source: {
 			type: "git" as const,
 			url: repoUrl,
