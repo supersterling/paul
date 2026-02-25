@@ -210,19 +210,19 @@ function composePreview(
 ): string {
 	const blocks: string[] = []
 
-	blocks.push(`## ${RESPONSE_STYLE_HEADER}\n\n${RESPONSE_STYLE_CONTENT}`)
+	blocks.push(`# ${RESPONSE_STYLE_HEADER}\n\n${RESPONSE_STYLE_CONTENT}`)
 
 	for (const phase of effectivePhases) {
 		const sections = effectiveByPhase.get(phase)
 		if (!sections) continue
 		for (const section of sections) {
-			blocks.push(`## ${section.header}\n\n${section.content}`)
+			blocks.push(`# ${section.header}\n\n${section.content}`)
 		}
 	}
 
-	blocks.push("## Feature Request\n\n[Your feature request will appear here]")
+	blocks.push("# Feature Request\n\n[Your feature request will appear here]")
 
-	return blocks.join("\n\n")
+	return blocks.join("\n\n---\n\n")
 }
 
 async function performDelete(section: EffectiveSection, slackUserId: string): Promise<boolean> {
