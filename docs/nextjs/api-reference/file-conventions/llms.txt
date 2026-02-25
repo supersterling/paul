@@ -1,0 +1,41 @@
+# Next.js File Conventions Reference
+
+@generated: 2026-02-06
+@page-count: 27
+
+
+## (root)
+
+- [default.js](https://nextjs.org/docs/app/api-reference/file-conventions/default)
+- [Dynamic Route Segments](https://nextjs.org/docs/app/api-reference/file-conventions/dynamic-routes)
+- [error.js](https://nextjs.org/docs/app/api-reference/file-conventions/error)
+- [forbidden.js](https://nextjs.org/docs/app/api-reference/file-conventions/forbidden)
+- [instrumentation-client.js](https://nextjs.org/docs/app/api-reference/file-conventions/instrumentation-client)
+- [instrumentation.js](https://nextjs.org/docs/app/api-reference/file-conventions/instrumentation)
+- [Intercepting Routes](https://nextjs.org/docs/app/api-reference/file-conventions/intercepting-routes)
+- [layout.js](https://nextjs.org/docs/app/api-reference/file-conventions/layout)
+- [loading.js](https://nextjs.org/docs/app/api-reference/file-conventions/loading)
+- [mdx-components.js](https://nextjs.org/docs/app/api-reference/file-conventions/mdx-components)
+- [Metadata Files API Reference](https://nextjs.org/docs/app/api-reference/file-conventions/metadata)
+
+## metadata
+
+- [favicon, icon, and apple-icon](https://nextjs.org/docs/app/api-reference/file-conventions/metadata/app-icons)
+- [manifest.json](https://nextjs.org/docs/app/api-reference/file-conventions/metadata/manifest)
+- [opengraph-image and twitter-image](https://nextjs.org/docs/app/api-reference/file-conventions/metadata/opengraph-image)
+- [robots.txt](https://nextjs.org/docs/app/api-reference/file-conventions/metadata/robots)
+- [sitemap.xml](https://nextjs.org/docs/app/api-reference/file-conventions/metadata/sitemap)
+
+## (root)
+
+- [not-found.js](https://nextjs.org/docs/app/api-reference/file-conventions/not-found)
+- [page.js](https://nextjs.org/docs/app/api-reference/file-conventions/page)
+- [Parallel Routes](https://nextjs.org/docs/app/api-reference/file-conventions/parallel-routes)
+- [proxy.js](https://nextjs.org/docs/app/api-reference/file-conventions/proxy)
+- [public Folder](https://nextjs.org/docs/app/api-reference/file-conventions/public-folder)
+- [Route Groups](https://nextjs.org/docs/app/api-reference/file-conventions/route-groups)
+- [Route Segment Config](https://nextjs.org/docs/app/api-reference/file-conventions/route-segment-config)
+- [route.js](https://nextjs.org/docs/app/api-reference/file-conventions/route)
+- [src Folder](https://nextjs.org/docs/app/api-reference/file-conventions/src-folder)
+- [template.js](https://nextjs.org/docs/app/api-reference/file-conventions/template)
+- [unauthorized.js](https://nextjs.org/docs/app/api-reference/file-conventions/unauthorized)

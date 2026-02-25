@@ -1,0 +1,13 @@
+# Next.js Directives Reference
+
+@generated: 2026-02-06
+@page-count: 5
+
+
+## (root)
+
+- [use cache: private](https://nextjs.org/docs/app/api-reference/directives/use-cache-private)
+- [use cache: remote](https://nextjs.org/docs/app/api-reference/directives/use-cache-remote)
+- [use cache](https://nextjs.org/docs/app/api-reference/directives/use-cache)
+- [use client](https://nextjs.org/docs/app/api-reference/directives/use-client)
+- [use server](https://nextjs.org/docs/app/api-reference/directives/use-server)

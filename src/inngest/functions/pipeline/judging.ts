@@ -13,9 +13,6 @@ import { updateFeatureRunMemories } from "@/lib/pipeline/persistence"
 import type { StaticToolCallGeneric } from "@/lib/pipeline/phase-loop"
 import { buildToolResult, runAgentLoop } from "@/lib/pipeline/phase-loop"
 
-// ---------------------------------------------------------------------------
-// Schemas
-// ---------------------------------------------------------------------------
 
 const CriterionSchema = z.enum(["security", "bugs", "compatibility", "performance", "quality"])
 
@@ -54,9 +51,6 @@ type Finding = z.infer<typeof FindingSchema>
 type Verdict = z.infer<typeof VerdictSchema>
 type Condition = z.infer<typeof ConditionSchema>
 
-// ---------------------------------------------------------------------------
-// Tool input schemas for runtime validation
-// ---------------------------------------------------------------------------
 
 const ReadInputSchema = z.object({
 	path: z.string()
@@ -83,9 +77,6 @@ const SelectedApproachIdSchema = z.object({
 	id: z.string()
 })
 
-// ---------------------------------------------------------------------------
-// Schema-only tool definitions for runAgentLoop dispatch
-// ---------------------------------------------------------------------------
 
 const judgeReadTool = tool({
 	description:
@@ -125,9 +116,6 @@ const judgingTools = {
 	create_memory: createMemoryTool
 } as const
 
-// ---------------------------------------------------------------------------
-// Deterministic verdict derivation
-// ---------------------------------------------------------------------------
 
 function deriveVerdict(findings: Finding[]): Verdict {
 	const hasCritical = findings.some(function checkCritical(f) {
@@ -188,9 +176,6 @@ function buildRejectionReason(findings: Finding[]): string | undefined {
 	return undefined
 }
 
-// ---------------------------------------------------------------------------
-// Filesystem tool dispatch
-// ---------------------------------------------------------------------------
 
 async function handleReadTool(
 	toolCall: StaticToolCallGeneric,
@@ -289,9 +274,6 @@ function handleCreateMemory(
 	return { ok: true }
 }
 
-// ---------------------------------------------------------------------------
-// Approach ID extraction
-// ---------------------------------------------------------------------------
 
 function extractApproachId(selectedApproach: unknown): string {
 	if (typeof selectedApproach !== "object" || selectedApproach === null) {
@@ -304,9 +286,6 @@ function extractApproachId(selectedApproach: unknown): string {
 	return parsed.data.id
 }
 
-// ---------------------------------------------------------------------------
-// Inngest function
-// ---------------------------------------------------------------------------
 
 const judgingFunction = inngest.createFunction(
 	{ id: "paul/pipeline/judging" },
@@ -433,5 +412,5 @@ const judgingFunction = inngest.createFunction(
 	}
 )
 
-export { judgingFunction, JudgingOutputSchema }
+export { JudgingOutputSchema, judgingFunction }
 export type { JudgingOutput }

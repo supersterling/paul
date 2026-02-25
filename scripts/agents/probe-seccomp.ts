@@ -10,12 +10,12 @@ async function run(sandbox: Sandbox, label: string, cmd: string, args: string[])
 	console.log(`  ${status}`)
 	if (stdout.trim()) {
 		const lines = stdout.trim().split("\n")
-		const preview = lines.length > 5 ? lines.slice(0, 5).join("\n") + `\n  ... (${lines.length} lines)` : stdout.trim()
+		const preview = lines.length > 5 ? `${lines.slice(0, 5).join("\n")}\n  ... (${lines.length} lines)` : stdout.trim()
 		console.log(`  stdout: ${preview}`)
 	}
 	if (stderr.trim()) {
 		const lines = stderr.trim().split("\n")
-		const preview = lines.length > 3 ? lines.slice(0, 3).join("\n") + `\n  ... (${lines.length} lines)` : stderr.trim()
+		const preview = lines.length > 3 ? `${lines.slice(0, 3).join("\n")}\n  ... (${lines.length} lines)` : stderr.trim()
 		console.log(`  stderr: ${preview}`)
 	}
 }

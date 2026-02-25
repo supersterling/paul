@@ -12,9 +12,6 @@ import {
 
 type Db = typeof dbClient
 
-// ---------------------------------------------------------------------------
-// Feature Runs
-// ---------------------------------------------------------------------------
 
 type CreateFeatureRunData = {
 	id: string
@@ -122,9 +119,6 @@ async function failFeatureRun(db: Db, runId: string): Promise<void> {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Sandboxes
-// ---------------------------------------------------------------------------
 
 type CreateSandboxData = {
 	id: string
@@ -199,9 +193,6 @@ async function updateSandboxStatus(
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Phase Results
-// ---------------------------------------------------------------------------
 
 type CreatePhaseResultData = {
 	id: string
@@ -263,9 +254,6 @@ async function failPhaseResult(db: Db, phaseResultId: string): Promise<void> {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Agent Invocations
-// ---------------------------------------------------------------------------
 
 type CreateAgentInvocationData = {
 	id: string
@@ -351,9 +339,6 @@ async function completeAgentInvocation(
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CTA Events
-// ---------------------------------------------------------------------------
 
 type CreateCtaEventData = {
 	id: string

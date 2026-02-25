@@ -367,5 +367,5 @@ const implementationFunction = inngest.createFunction(
 	}
 )
 
-export { implementationFunction, ImplementationOutputSchema, MAX_CODER_ATTEMPTS }
+export { ImplementationOutputSchema, MAX_CODER_ATTEMPTS, implementationFunction }
 export type { FileChange, ImplementationOutput }

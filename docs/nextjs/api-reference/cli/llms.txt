@@ -1,0 +1,10 @@
+# Next.js CLI Reference
+
+@generated: 2026-02-06
+@page-count: 2
+
+
+## (root)
+
+- [create-next-app](https://nextjs.org/docs/app/api-reference/cli/create-next-app)
+- [next CLI](https://nextjs.org/docs/app/api-reference/cli/next)

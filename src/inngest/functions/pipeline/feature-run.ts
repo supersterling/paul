@@ -284,10 +284,6 @@ const featureRunFunction = inngest.createFunction(
 
 		logger.info("starting feature run", { githubRepoUrl, githubBranch, runtime })
 
-		// -----------------------------------------------------------------------
-		// 1. Create sandbox
-		// -----------------------------------------------------------------------
-
 		const sandboxResult = await step.invoke("create-sandbox", {
 			function: sandboxCreateFunction,
 			data: {
@@ -302,10 +298,6 @@ const featureRunFunction = inngest.createFunction(
 		const sandboxId = sandboxResult.sandboxId
 
 		logger.info("sandbox created", { sandboxId })
-
-		// -----------------------------------------------------------------------
-		// 2. Persist sandbox + feature run records
-		// -----------------------------------------------------------------------
 
 		await step.run("persist-sandbox-record", async function persistSandbox() {
 			await createSandboxRecord(db, {
@@ -332,10 +324,6 @@ const featureRunFunction = inngest.createFunction(
 			})
 			return id
 		})
-
-		// -----------------------------------------------------------------------
-		// 3. Analysis phase
-		// -----------------------------------------------------------------------
 
 		const analysisPhaseResultId = await step.run(
 			"create-phase-analysis",
@@ -388,10 +376,6 @@ const featureRunFunction = inngest.createFunction(
 		if (!analysisCtaResponse) {
 			return handleCtaTimeout(runId, sandboxId, analysisPhaseResultId, step, logger)
 		}
-
-		// -----------------------------------------------------------------------
-		// 4. Approaches phase
-		// -----------------------------------------------------------------------
 
 		const approachesPhaseResultId = await step.run(
 			"create-phase-approaches",
@@ -462,10 +446,6 @@ const featureRunFunction = inngest.createFunction(
 
 		logger.info("approach selected", { runId })
 
-		// -----------------------------------------------------------------------
-		// 5. Judging phase
-		// -----------------------------------------------------------------------
-
 		const judgingPhaseResultId = await step.run(
 			"create-phase-judging",
 			async function createJudgingPhase() {
@@ -526,10 +506,6 @@ const featureRunFunction = inngest.createFunction(
 		if (!judgingCtaResponse) {
 			return handleCtaTimeout(runId, sandboxId, judgingPhaseResultId, step, logger)
 		}
-
-		// -----------------------------------------------------------------------
-		// 6. Implementation phase
-		// -----------------------------------------------------------------------
 
 		const implPhaseResultId = await step.run(
 			"create-phase-implementation",
@@ -598,10 +574,6 @@ const featureRunFunction = inngest.createFunction(
 			return handleCtaTimeout(runId, sandboxId, implPhaseResultId, step, logger)
 		}
 
-		// -----------------------------------------------------------------------
-		// 7. PR creation
-		// -----------------------------------------------------------------------
-
 		const prPhaseResultId = await step.run("create-phase-pr", async function createPrPhase() {
 			const id = crypto.randomUUID()
 			await createPhaseResult(db, { id, runId, phase: "pr" })
@@ -626,10 +598,6 @@ const featureRunFunction = inngest.createFunction(
 		await step.run("complete-run", async function completeRun() {
 			await completeFeatureRun(db, runId)
 		})
-
-		// -----------------------------------------------------------------------
-		// 8. Cleanup
-		// -----------------------------------------------------------------------
 
 		await step.invoke("stop-sandbox", {
 			function: sandboxStopFunction,
