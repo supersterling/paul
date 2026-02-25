@@ -20,6 +20,7 @@ const env = createEnv({
 	 */
 	server: {
 		ANTHROPIC_API_KEY: z.string().optional(),
+		CLERK_SECRET_KEY: z.string().optional(),
 		DATABASE_URL: z.url(),
 		INNGEST_EVENT_KEY: z.string().optional(),
 		INNGEST_SIGNING_KEY: z.string().optional(),
@@ -40,7 +41,7 @@ const env = createEnv({
 	 * `NEXT_PUBLIC_`.
 	 */
 	client: {
-		// NEXT_PUBLIC_CLIENTVAR: z.string(),
+		NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.string().optional()
 	},
 
 	/**
@@ -49,9 +50,11 @@ const env = createEnv({
 	 */
 	runtimeEnv: {
 		ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+		CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY,
 		DATABASE_URL: process.env.DATABASE_URL,
 		INNGEST_EVENT_KEY: process.env.INNGEST_EVENT_KEY,
 		INNGEST_SIGNING_KEY: process.env.INNGEST_SIGNING_KEY,
+		NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
 		VERCEL_PROJECT_PRODUCTION_URL: process.env.VERCEL_PROJECT_PRODUCTION_URL,
 		VERCEL_GIT_COMMIT_SHA: process.env.VERCEL_GIT_COMMIT_SHA,
 		VERCEL_OIDC_TOKEN: process.env.VERCEL_OIDC_TOKEN,
