@@ -10,6 +10,7 @@
 		"includes": [
 			"**",
 			"!**/src/components/ui",
+			"!**/src/components/kibo-ui",
 			"!**/openapi.d.ts",
 			"!!node_modules",
 			"!!.next",

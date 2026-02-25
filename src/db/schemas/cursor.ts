@@ -1,4 +1,4 @@
-import { jsonb, pgSchema, text, timestamp } from "drizzle-orm/pg-core"
+import { integer, jsonb, pgSchema, serial, text, timestamp } from "drizzle-orm/pg-core"
 
 const agentSchema = pgSchema("agent")
 
@@ -15,4 +15,16 @@ const cursorAgentThreads = agentSchema.table("cursor_agent_threads", {
 	createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull()
 })
 
-export { cursorAgentThreads }
+const cursorThreadQueue = agentSchema.table("cursor_thread_queue", {
+	id: serial("id").primaryKey(),
+	threadId: text("thread_id").notNull(),
+	prompt: text("prompt").notNull(),
+	rawMessage: text("raw_message").notNull(),
+	slackUserId: text("slack_user_id").notNull(),
+	messageId: text("message_id").notNull(),
+	position: integer("position").notNull(),
+	status: text("status").notNull(),
+	createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull()
+})
+
+export { cursorAgentThreads, cursorThreadQueue }

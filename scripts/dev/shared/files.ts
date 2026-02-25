@@ -51,6 +51,9 @@ function isSkippedPath(fileName: string): boolean {
 	if (fileName.includes("src/components/ui")) {
 		return true
 	}
+	if (fileName.includes("src/components/kibo-ui")) {
+		return true
+	}
 	return false
 }
 
