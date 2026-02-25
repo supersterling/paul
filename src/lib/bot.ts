@@ -1,8 +1,8 @@
 import { createSlackAdapter } from "@chat-adapter/slack"
-import type { Attachment } from "chat"
 import * as errors from "@superbuilders/errors"
 import * as logger from "@superbuilders/slog"
-import { Actions, Button, Card, CardText, Chat, type Thread, ThreadImpl } from "chat"
+import type { Attachment } from "chat"
+import { Actions, type Author, Button, Card, CardText, Chat, type Thread, ThreadImpl } from "chat"
 import { eq } from "drizzle-orm"
 import { db } from "@/db"
 import { cursorAgentThreads } from "@/db/schemas/cursor"
@@ -10,6 +10,7 @@ import { env } from "@/env"
 import { inngest } from "@/inngest"
 import { createCursorClient } from "@/lib/clients/cursor/client"
 import { composeWorkflowPrompt } from "@/lib/prompt-compose"
+import { dequeue, ErrQueueFull, enqueue, MAX_QUEUE_SIZE, pendingCount } from "@/lib/queue"
 import type { CursorImage } from "@/lib/slack-images"
 import { extractImages, parseCursorImages } from "@/lib/slack-images"
 import { createPostgresState } from "@/lib/state-postgres"
@@ -60,6 +61,26 @@ bot.onAction("cursor-cancel-followup", async (event) => {
 			error: result.error,
 			threadId: event.threadId
 		})
+		await postError(event.thread, result.error)
+	}
+})
+
+bot.onAction("cursor-queue", async (event) => {
+	const result = await errors.try(
+		handleQueue(event.thread, event.threadId, event.user, event.messageId)
+	)
+	if (result.error) {
+		logger.error("queue action failed", { error: result.error, threadId: event.threadId })
+		await postError(event.thread, result.error)
+	}
+})
+
+bot.onAction("cursor-dequeue", async (event) => {
+	const result = await errors.try(
+		handleDequeue(event.thread, event.threadId, event.user, event.value)
+	)
+	if (result.error) {
+		logger.error("dequeue action failed", { error: result.error, threadId: event.threadId })
 		await postError(event.thread, result.error)
 	}
 })
@@ -206,29 +227,46 @@ async function handleSubscribedMessage(thread: Thread, message: IncomingMessage)
 	}
 
 	if (row.status === "RUNNING" || row.status === "CREATING") {
+		const followupImages = images.length > 0 ? images : null
 		await db
 			.update(cursorAgentThreads)
 			.set({
 				pendingFollowup: followupText,
-				pendingFollowupImages: images.length > 0 ? images : null
+				pendingFollowupImages: followupImages
 			})
 			.where(eq(cursorAgentThreads.threadId, thread.id))
 
-		const card = Card({
-			children: [
-				CardText("The agent is still running. To send a follow-up, I need to stop it first."),
-				Actions([
+		const queueCount = await pendingCount(thread.id)
+		const queueIsFull = queueCount >= MAX_QUEUE_SIZE
+
+		const stopButton = Button({
+			id: "cursor-stop-and-followup",
+			label: "Stop & Send Now",
+			style: "danger"
+		})
+		const cancelButton = Button({
+			id: "cursor-cancel-followup",
+			label: "Cancel"
+		})
+
+		const buttons = queueIsFull
+			? [stopButton, cancelButton]
+			: [
 					Button({
-						id: "cursor-stop-and-followup",
-						label: "Stop & Send Follow-up",
-						style: "danger"
+						id: "cursor-queue",
+						label: `Queue This (#${queueCount + 1} in line)`,
+						style: "primary"
 					}),
-					Button({
-						id: "cursor-cancel-followup",
-						label: "Cancel"
-					})
-				])
-			]
+					stopButton,
+					cancelButton
+				]
+
+		const cardText = queueIsFull
+			? `The agent is still running. Queue is full (${MAX_QUEUE_SIZE}/${MAX_QUEUE_SIZE}).`
+			: "The agent is still running. You can queue this message or stop the agent."
+
+		const card = Card({
+			children: [CardText(cardText), Actions(buttons)]
 		})
 
 		await thread.postEphemeral(message.author, card, { fallbackToDM: false })
@@ -323,6 +361,135 @@ async function handleCancelFollowup(thread: Thread<unknown>, threadId: string): 
 		.where(eq(cursorAgentThreads.threadId, threadId))
 
 	await thread.post("Cancelled.")
+}
+
+async function handleQueue(
+	thread: Thread<unknown>,
+	threadId: string,
+	user: Author,
+	messageId: string
+): Promise<void> {
+	logger.info("queue action", { threadId, userId: user.userId })
+
+	const rows = await db
+		.select({
+			pendingFollowup: cursorAgentThreads.pendingFollowup,
+			repository: cursorAgentThreads.repository
+		})
+		.from(cursorAgentThreads)
+		.where(eq(cursorAgentThreads.threadId, threadId))
+
+	const row = rows[0]
+	if (!row) {
+		logger.error("no agent found for queue action", { threadId })
+		throw errors.new("no agent found for this thread")
+	}
+
+	if (!row.pendingFollowup) {
+		logger.error("no pending followup for queue action", { threadId })
+		throw errors.new("no pending follow-up message found")
+	}
+
+	const config = CHANNEL_REPOS[thread.channelId]
+	if (!config) {
+		logger.error("no repo configured for channel", { channelId: thread.channelId })
+		throw errors.new("no repo configured for this channel")
+	}
+
+	const composedPrompt = await composeWorkflowPrompt(
+		config.repository,
+		row.pendingFollowup,
+		user.userId
+	)
+
+	const enqueueResult = await errors.try(
+		enqueue({
+			threadId,
+			prompt: composedPrompt,
+			rawMessage: row.pendingFollowup,
+			slackUserId: user.userId,
+			messageId
+		})
+	)
+	if (enqueueResult.error) {
+		if (errors.is(enqueueResult.error, ErrQueueFull)) {
+			const fullCard = Card({
+				children: [
+					CardText(`Queue is full (${MAX_QUEUE_SIZE}/${MAX_QUEUE_SIZE}). Try again later.`)
+				]
+			})
+			await thread.postEphemeral(user, fullCard, { fallbackToDM: false })
+			return
+		}
+		logger.error("enqueue failed", { error: enqueueResult.error, threadId })
+		throw errors.wrap(enqueueResult.error, "enqueue")
+	}
+
+	await db
+		.update(cursorAgentThreads)
+		.set({ pendingFollowup: null, pendingFollowupImages: null })
+		.where(eq(cursorAgentThreads.threadId, threadId))
+
+	await reactToMessage(thread, messageId, "hourglass_flowing_sand", "add")
+
+	const position = enqueueResult.data.position
+	const itemId = enqueueResult.data.id
+
+	const queuedCard = Card({
+		children: [
+			CardText(`Queued at position #${position}.`),
+			Actions([
+				Button({
+					id: "cursor-dequeue",
+					label: "Remove from Queue",
+					style: "danger",
+					value: String(itemId)
+				})
+			])
+		]
+	})
+
+	await thread.postEphemeral(user, queuedCard, { fallbackToDM: false })
+	logger.info("message queued", { threadId, position, itemId })
+}
+
+async function handleDequeue(
+	thread: Thread<unknown>,
+	threadId: string,
+	user: Author,
+	value: string | undefined
+): Promise<void> {
+	logger.info("dequeue action", { threadId, value })
+
+	if (!value) {
+		logger.error("dequeue action missing value", { threadId })
+		throw errors.new("missing queue item id")
+	}
+
+	const itemId = Number.parseInt(value, 10)
+	if (Number.isNaN(itemId)) {
+		logger.error("dequeue action invalid value", { threadId, value })
+		throw errors.new("invalid queue item id")
+	}
+
+	const item = await dequeue(itemId)
+	if (!item) {
+		const goneCard = Card({
+			children: [CardText("Item was already removed or processed.")]
+		})
+		await thread.postEphemeral(user, goneCard, { fallbackToDM: false })
+		return
+	}
+
+	if (item.messageId) {
+		await reactToMessage(thread, item.messageId, "hourglass_flowing_sand", "remove")
+	}
+
+	const removedCard = Card({
+		children: [CardText("Removed from queue.")]
+	})
+	await thread.postEphemeral(user, removedCard, { fallbackToDM: false })
+	logger.info("item dequeued", { threadId, itemId })
 }
 
 async function sendFollowup(
