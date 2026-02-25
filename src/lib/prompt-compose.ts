@@ -50,7 +50,11 @@ async function composeWorkflowPrompt(
 		phaseCount: phases.length
 	})
 
-	const allSections: PromptSection[] = [RESPONSE_STYLE_SECTION]
+	const blocks: string[] = []
+
+	blocks.push(
+		`## ${RESPONSE_STYLE_SECTION.header}\n\n${RESPONSE_STYLE_SECTION.content}`
+	)
 
 	for (const phase of phases) {
 		const baseSections = await db
@@ -96,16 +100,17 @@ async function composeWorkflowPrompt(
 			merged = mergeSections(merged, userSections)
 		}
 
+		if (merged.length === 0) continue
+
+		const phaseLabel = phase.charAt(0).toUpperCase() + phase.slice(1)
+		blocks.push(`---\n\n# ${phaseLabel}`)
+
 		for (const section of merged) {
-			allSections.push(section)
+			blocks.push(`## ${section.header}\n\n${section.content}`)
 		}
 	}
 
-	allSections.push({ header: "Feature Request", content: featureRequest, position: 9999 })
-
-	allSections.sort((a, b) => a.position - b.position)
-
-	const blocks = allSections.map((s) => `## ${s.header}\n\n${s.content}`)
+	blocks.push(`---\n\n## Feature Request\n\n${featureRequest}`)
 
 	logger.debug("workflow prompt composed", { sectionCount: blocks.length })
 
