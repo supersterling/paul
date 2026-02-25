@@ -7,23 +7,9 @@ import { db } from "@/db"
 import { cursorAgentThreads } from "@/db/schemas/cursor"
 import { env } from "@/env"
 import { inngest } from "@/inngest"
+import { buildResultMessage } from "@/inngest/functions/cursor/format"
 import { thread } from "@/lib/bot"
 import { createCursorClient } from "@/lib/clients/cursor/client"
-
-type AgentInfo = {
-	agentId: string
-	name: string
-	branchName?: string
-	url: string
-}
-
-type CompletionData = {
-	status: "FINISHED" | "ERROR"
-	summary?: string
-	branchName?: string
-	prUrl?: string
-	agentUrl?: string
-}
 
 async function postToThread(
 	t: Thread,
@@ -36,40 +22,6 @@ async function postToThread(
 		logger.error("failed to post to slack", { error: result.error, context })
 		throw errors.wrap(result.error, context)
 	}
-}
-
-function buildResultMessage(
-	data: CompletionData,
-	agent: AgentInfo,
-	lastAssistantMessage: string
-): string {
-	const { status, prUrl, branchName, agentUrl } = data
-	const viewUrl = agentUrl ? agentUrl : agent.url
-	const isError = status === "ERROR"
-	const heading = isError ? "*Agent errored*" : "*Agent finished*"
-
-	const lines = [heading]
-
-	if (branchName) {
-		lines.push(`Branch: \`${branchName}\``)
-	}
-	if (prUrl) {
-		lines.push(`<${prUrl}|View PR>`)
-	}
-	if (isError) {
-		lines.push(`<${viewUrl}|View in Cursor>`)
-	}
-
-	if (lastAssistantMessage) {
-		lines.push("")
-		const quoted = lastAssistantMessage
-			.split("\n")
-			.map((line) => `> ${line}`)
-			.join("\n")
-		lines.push(quoted)
-	}
-
-	return lines.join("\n")
 }
 
 const agentLifecycle = inngest.createFunction(
@@ -131,9 +83,16 @@ const agentLifecycle = inngest.createFunction(
 
 		await step.run("post-confirmation", async () => {
 			const t = thread(threadId)
-			const branchDisplay = agent.branchName ? ` on branch \`${agent.branchName}\`` : ""
-			const message = `Agent launched${branchDisplay} \u2014 <${agent.url}|View in Cursor>`
-			logger.info("posting confirmation", { threadId, message })
+			const branchSuffix = agent.branchName ? `, branch \`${agent.branchName}\`` : ""
+			const lines = [
+				"*Running*",
+				"",
+				`Your agent is running on \`${repository}\`${branchSuffix}.`,
+				"",
+				`View the agent in <${agent.url}|Cursor>.`
+			]
+			const message = lines.join("\n")
+			logger.info("posting confirmation", { threadId })
 			await postToThread(t, message, logger, "post confirmation to slack")
 
 			await db.insert(cursorAgentThreads).values({
@@ -205,28 +164,20 @@ const agentLifecycle = inngest.createFunction(
 
 			if (!completionEvent) {
 				logger.warn("agent timed out", { agentId: agent.agentId })
-				await postToThread(
-					t,
-					`Agent timed out. <${agent.url}|Check manually>`,
-					logger,
-					"post timeout to slack"
-				)
+				const timeoutMsg = `*Timed out*\n\nYour agent timed out.\n\nView the agent in <${agent.url}|Cursor>.`
+				await postToThread(t, timeoutMsg, logger, "post timeout to slack")
 				return
 			}
 
-			const isError = completionEvent.data.status === "ERROR"
-			if (isError) {
-				logger.error("agent errored", { agentId: agent.agentId })
-			} else {
-				logger.info("agent finished", {
-					agentId: agent.agentId,
-					prUrl: completionEvent.data.prUrl,
-					branchName: completionEvent.data.branchName
-				})
-			}
+			logger.info("agent completed", {
+				agentId: agent.agentId,
+				status: completionEvent.data.status,
+				prUrl: completionEvent.data.prUrl,
+				branchName: completionEvent.data.branchName
+			})
 
-			const message = buildResultMessage(completionEvent.data, agent, lastMessage)
-			await postToThread(t, message, logger, "post result to slack")
+			const resultMsg = buildResultMessage(completionEvent.data, agent.url, lastMessage)
+			await postToThread(t, resultMsg, logger, "post result to slack")
 		})
 
 		return { agentId: agent.agentId, status: completionEvent?.data.status }

@@ -132,6 +132,11 @@ const schema = {
 		ref: z.string().min(1),
 		threadId: z.string().min(1)
 	}),
+	"cursor/followup.sent": z.object({
+		agentId: z.string().min(1),
+		threadId: z.string().min(1),
+		agentUrl: z.string().min(1)
+	}),
 	"cursor/agent.finished": z.object({
 		agentId: z.string().min(1),
 		status: z.enum(["FINISHED", "ERROR"]),

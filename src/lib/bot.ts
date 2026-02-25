@@ -23,7 +23,7 @@ const bot = new Chat({
 }).registerSingleton()
 
 bot.onNewMention(async (thread, message) => {
-	const result = await errors.try(handleNewMention(thread, message.text))
+	const result = await errors.try(handleNewMention(thread, message))
 	if (result.error) {
 		logger.error("onNewMention failed", { error: result.error, threadId: thread.id })
 		await postError(thread, result.error)
@@ -67,8 +67,20 @@ async function postError(thread: Thread<unknown>, err: Error): Promise<void> {
 	}
 }
 
-async function handleNewMention(thread: Thread, rawText: string): Promise<void> {
-	const prompt = rawText.replace(/@U0AGS2FM1NX/g, "@Cursor").trim()
+type IncomingMessage = {
+	id: string
+	text: string
+	author: {
+		userId: string
+		userName: string
+		fullName: string
+		isBot: boolean | "unknown"
+		isMe: boolean
+	}
+}
+
+async function handleNewMention(thread: Thread, message: IncomingMessage): Promise<void> {
+	const prompt = message.text.replace(/@U0AGS2FM1NX/g, "@Cursor").trim()
 	if (!prompt) {
 		await thread.post("Give me a task and I'll launch a Cursor agent for it.")
 		return
@@ -82,6 +94,13 @@ async function handleNewMention(thread: Thread, rawText: string): Promise<void> 
 
 	await thread.subscribe()
 
+	const reactResult = await errors.try(
+		thread.adapter.addReaction(thread.id, message.id, "one-sec-cooking")
+	)
+	if (reactResult.error) {
+		logger.warn("failed to react to mention", { error: reactResult.error })
+	}
+
 	await inngest.send({
 		name: "cursor/agent.launch",
 		data: {
@@ -91,24 +110,9 @@ async function handleNewMention(thread: Thread, rawText: string): Promise<void> 
 			threadId: thread.id
 		}
 	})
-
-	await thread.post(
-		`Launching Cursor agent on \`${config.repository}\` (branch: \`${config.ref}\`)...`
-	)
 }
 
-type FollowupMessage = {
-	text: string
-	author: {
-		userId: string
-		userName: string
-		fullName: string
-		isBot: boolean | "unknown"
-		isMe: boolean
-	}
-}
-
-async function handleSubscribedMessage(thread: Thread, message: FollowupMessage): Promise<void> {
+async function handleSubscribedMessage(thread: Thread, message: IncomingMessage): Promise<void> {
 	const followupText = message.text.replace(/@U0AGS2FM1NX/g, "@Cursor").trim()
 	if (!followupText) {
 		return
@@ -165,7 +169,15 @@ async function handleSubscribedMessage(thread: Thread, message: FollowupMessage)
 	}
 
 	await sendFollowup(apiKey, row.agentId, followupText)
-	await thread.post("Follow-up sent to the agent.")
+
+	await inngest.send({
+		name: "cursor/followup.sent",
+		data: { agentId: row.agentId, threadId: thread.id, agentUrl: row.agentUrl }
+	})
+
+	await thread.post(
+		"*Follow-up sent*\n\nYour follow-up has been sent to the agent. Waiting for a response..."
+	)
 	logger.info("followup sent", { agentId: row.agentId, threadId: thread.id })
 }
 
@@ -175,6 +187,7 @@ async function handleStopAndFollowup(thread: Thread<unknown>, threadId: string):
 	const rows = await db
 		.select({
 			agentId: cursorAgentThreads.agentId,
+			agentUrl: cursorAgentThreads.agentUrl,
 			pendingFollowup: cursorAgentThreads.pendingFollowup
 		})
 		.from(cursorAgentThreads)
@@ -215,10 +228,17 @@ async function handleStopAndFollowup(thread: Thread<unknown>, threadId: string):
 
 	await db
 		.update(cursorAgentThreads)
-		.set({ pendingFollowup: null, status: "FINISHED" })
+		.set({ pendingFollowup: null })
 		.where(eq(cursorAgentThreads.threadId, threadId))
 
-	await thread.post("Agent stopped and follow-up sent.")
+	await inngest.send({
+		name: "cursor/followup.sent",
+		data: { agentId: row.agentId, threadId, agentUrl: row.agentUrl }
+	})
+
+	await thread.post(
+		"*Follow-up sent*\n\nAgent stopped and follow-up sent. Waiting for a response..."
+	)
 	logger.info("stop and followup complete", { agentId: row.agentId })
 }
 
