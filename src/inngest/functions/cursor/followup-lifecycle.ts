@@ -8,6 +8,7 @@ import { inngest } from "@/inngest"
 import { buildResultMessage } from "@/inngest/functions/cursor/format"
 import { thread } from "@/lib/bot"
 import { createCursorClient } from "@/lib/clients/cursor/client"
+import { popNext } from "@/lib/queue"
 
 const followupLifecycle = inngest.createFunction(
 	{
@@ -102,6 +103,61 @@ const followupLifecycle = inngest.createFunction(
 			if (postResult.error) {
 				logger.error("failed to post followup result", { error: postResult.error })
 			}
+		})
+
+		await step.run("check-queue", async () => {
+			const next = await popNext(threadId)
+			if (!next) {
+				logger.info("no queued items", { threadId })
+				return
+			}
+
+			logger.info("launching next queued item", { threadId, queueItemId: next.id })
+
+			const rows = await db
+				.select({
+					repository: cursorAgentThreads.repository,
+					ref: cursorAgentThreads.ref
+				})
+				.from(cursorAgentThreads)
+				.where(eq(cursorAgentThreads.threadId, threadId))
+
+			const row = rows[0]
+			if (!row) {
+				logger.error("no agent thread row for queue launch", { threadId })
+				return
+			}
+
+			if (next.messageId) {
+				const t = thread(threadId)
+				const reactResult = await errors.try(
+					t.adapter.removeReaction(t.id, next.messageId, "hourglass_flowing_sand")
+				)
+				if (reactResult.error) {
+					logger.warn("failed to remove hourglass reaction", { error: reactResult.error })
+				}
+			}
+
+			const t = thread(threadId)
+			const preview = next.rawMessage.length <= 200
+				? next.rawMessage
+				: `${next.rawMessage.slice(0, 197)}...`
+			const queueMsg = `*Launching next queued task*\n\n_"${preview}"_`
+			const postResult = await errors.try(t.post(queueMsg))
+			if (postResult.error) {
+				logger.error("failed to post queue launch", { error: postResult.error })
+			}
+
+			await inngest.send({
+				name: "cursor/agent.launch",
+				data: {
+					prompt: next.prompt,
+					repository: row.repository,
+					ref: row.ref,
+					threadId,
+					images: []
+				}
+			})
 		})
 
 		return { agentId, status: completionEvent?.data.status }

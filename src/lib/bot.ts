@@ -129,7 +129,7 @@ type IncomingMessage = {
 
 const BOT_USER_ID = "U0AGS2FM1NX"
 const BOT_MENTION_PATTERN = new RegExp(`^@${BOT_USER_ID}`)
-const USER_MENTION_PATTERN = /@U[A-Z0-9]+/g
+const USER_MENTION_PATTERN = /@(?!here\b|channel\b|everyone\b)\S+/g
 
 async function handleNewMention(thread: Thread, message: IncomingMessage): Promise<void> {
 	if (!BOT_MENTION_PATTERN.test(message.text)) {
