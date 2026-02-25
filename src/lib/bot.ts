@@ -93,7 +93,9 @@ type IncomingMessage = {
 	}
 }
 
-const BOT_MENTION_PATTERN = /^@U0AGS2FM1NX/
+const BOT_USER_ID = "U0AGS2FM1NX"
+const BOT_MENTION_PATTERN = new RegExp(`^@${BOT_USER_ID}`)
+const USER_MENTION_PATTERN = /@U[A-Z0-9]+/g
 
 async function handleNewMention(thread: Thread, message: IncomingMessage): Promise<void> {
 	if (!BOT_MENTION_PATTERN.test(message.text)) {
@@ -101,7 +103,7 @@ async function handleNewMention(thread: Thread, message: IncomingMessage): Promi
 		return
 	}
 
-	const prompt = message.text.replace(/@U0AGS2FM1NX/g, "@Cursor").trim()
+	const prompt = message.text.replace(new RegExp(`@${BOT_USER_ID}`, "g"), "@Cursor").trim()
 	if (!prompt) {
 		await thread.post("Give me a task and I'll launch a Cursor agent for it.")
 		return
@@ -135,8 +137,19 @@ async function handleNewMention(thread: Thread, message: IncomingMessage): Promi
 	})
 }
 
+function isDirectedElsewhere(text: string): boolean {
+	const mentions = text.match(USER_MENTION_PATTERN)
+	if (!mentions) return false
+	return !mentions.some((m) => m === `@${BOT_USER_ID}`)
+}
+
 async function handleSubscribedMessage(thread: Thread, message: IncomingMessage): Promise<void> {
-	const followupText = message.text.replace(/@U0AGS2FM1NX/g, "@Cursor").trim()
+	if (isDirectedElsewhere(message.text)) {
+		logger.debug("ignoring message directed at others", { threadId: thread.id })
+		return
+	}
+
+	const followupText = message.text.replace(new RegExp(`@${BOT_USER_ID}`, "g"), "@Cursor").trim()
 	if (!followupText) {
 		return
 	}
