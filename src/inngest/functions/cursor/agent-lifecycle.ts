@@ -215,21 +215,7 @@ const agentLifecycle = inngest.createFunction(
 				return
 			}
 
-			logger.info("launching next queued item", { threadId, queueItemId: next.id })
-
-			const rows = await db
-				.select({
-					repository: cursorAgentThreads.repository,
-					ref: cursorAgentThreads.ref
-				})
-				.from(cursorAgentThreads)
-				.where(eq(cursorAgentThreads.threadId, threadId))
-
-			const row = rows[0]
-			if (!row) {
-				logger.error("no agent thread row for queue launch", { threadId })
-				return
-			}
+			logger.info("sending queued followup", { threadId, queueItemId: next.id })
 
 			if (next.messageId) {
 				const t = thread(threadId)
@@ -243,21 +229,28 @@ const agentLifecycle = inngest.createFunction(
 
 			const t = thread(threadId)
 			const preview = truncate(next.rawMessage, 200)
-			const queueMsg = `*Launching next queued task*\n\n_"${preview}"_`
-			await postToThread(t, queueMsg, logger, "post queue launch to slack")
+			const queueMsg = `*Sending queued follow-up*\n\n_"${preview}"_`
+			await postToThread(t, queueMsg, logger, "post queue followup to slack")
 
-			await inngest.send({
-				name: "cursor/agent.launch",
-				data: {
-					prompt: next.prompt,
-					repository: row.repository,
-					ref: row.ref,
-					threadId,
-					images: []
-				}
+			const client = createCursorClient(apiKey)
+			const { error } = await client.POST("/v0/agents/{id}/followup", {
+				params: { path: { id: agent.agentId } },
+				body: { prompt: { text: next.rawMessage } }
 			})
 
-			logger.info("queued item launched", { threadId, queueItemId: next.id })
+			if (error) {
+				const detail = JSON.stringify(error)
+				logger.error("cursor followup api error for queued item", { error: detail, agentId: agent.agentId })
+				await postToThread(t, `*Error sending queued follow-up:* \`${detail}\``, logger, "post queue error")
+				return
+			}
+
+			await inngest.send({
+				name: "cursor/followup.sent",
+				data: { agentId: agent.agentId, threadId, agentUrl: agent.url }
+			})
+
+			logger.info("queued followup sent", { threadId, queueItemId: next.id })
 		})
 
 		return { agentId: agent.agentId, status: completionEvent?.data.status }

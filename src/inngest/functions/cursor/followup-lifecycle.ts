@@ -112,21 +112,7 @@ const followupLifecycle = inngest.createFunction(
 				return
 			}
 
-			logger.info("launching next queued item", { threadId, queueItemId: next.id })
-
-			const rows = await db
-				.select({
-					repository: cursorAgentThreads.repository,
-					ref: cursorAgentThreads.ref
-				})
-				.from(cursorAgentThreads)
-				.where(eq(cursorAgentThreads.threadId, threadId))
-
-			const row = rows[0]
-			if (!row) {
-				logger.error("no agent thread row for queue launch", { threadId })
-				return
-			}
+			logger.info("sending queued followup", { threadId, queueItemId: next.id })
 
 			if (next.messageId) {
 				const t = thread(threadId)
@@ -142,22 +128,34 @@ const followupLifecycle = inngest.createFunction(
 			const preview = next.rawMessage.length <= 200
 				? next.rawMessage
 				: `${next.rawMessage.slice(0, 197)}...`
-			const queueMsg = `*Launching next queued task*\n\n_"${preview}"_`
+			const queueMsg = `*Sending queued follow-up*\n\n_"${preview}"_`
 			const postResult = await errors.try(t.post(queueMsg))
 			if (postResult.error) {
-				logger.error("failed to post queue launch", { error: postResult.error })
+				logger.error("failed to post queue followup", { error: postResult.error })
+			}
+
+			const client = createCursorClient(apiKey)
+			const { error } = await client.POST("/v0/agents/{id}/followup", {
+				params: { path: { id: agentId } },
+				body: { prompt: { text: next.rawMessage } }
+			})
+
+			if (error) {
+				const detail = JSON.stringify(error)
+				logger.error("cursor followup api error for queued item", { error: detail, agentId })
+				const errResult = await errors.try(t.post(`*Error sending queued follow-up:* \`${detail}\``))
+				if (errResult.error) {
+					logger.error("failed to post queue error", { error: errResult.error })
+				}
+				return
 			}
 
 			await inngest.send({
-				name: "cursor/agent.launch",
-				data: {
-					prompt: next.prompt,
-					repository: row.repository,
-					ref: row.ref,
-					threadId,
-					images: []
-				}
+				name: "cursor/followup.sent",
+				data: { agentId, threadId, agentUrl }
 			})
+
+			logger.info("queued followup sent", { threadId, queueItemId: next.id })
 		})
 
 		return { agentId, status: completionEvent?.data.status }
