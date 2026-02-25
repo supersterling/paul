@@ -8,6 +8,7 @@ import { cursorAgentThreads } from "@/db/schemas/cursor"
 import { env } from "@/env"
 import { inngest } from "@/inngest"
 import { createCursorClient } from "@/lib/clients/cursor/client"
+import { composePhasePrompt, nextPhase, phaseLabel } from "@/lib/prompt-compose"
 import { createPostgresState } from "@/lib/state-postgres"
 
 const CHANNEL_REPOS: Record<string, { repository: string; ref: string }> = {
@@ -53,6 +54,17 @@ bot.onAction("cursor-cancel-followup", async (event) => {
 	const result = await errors.try(handleCancelFollowup(event.thread, event.threadId))
 	if (result.error) {
 		logger.error("cancel-followup action failed", {
+			error: result.error,
+			threadId: event.threadId
+		})
+		await postError(event.thread, result.error)
+	}
+})
+
+bot.onAction("cursor-phase-continue", async (event) => {
+	const result = await errors.try(handlePhaseContinue(event.thread, event.threadId))
+	if (result.error) {
+		logger.error("phase-continue action failed", {
 			error: result.error,
 			threadId: event.threadId
 		})
@@ -121,14 +133,17 @@ async function handleNewMention(thread: Thread, message: IncomingMessage): Promi
 		logger.warn("failed to react to mention", { error: reactResult.error })
 	}
 
+	const composedPrompt = await composePhasePrompt("research", config.repository, prompt)
+
 	await inngest.send({
 		name: "cursor/agent.launch",
 		data: {
-			prompt,
+			prompt: composedPrompt,
 			repository: config.repository,
 			ref: config.ref,
 			threadId: thread.id,
-			workflowActive: false
+			workflowActive: true,
+			currentPhase: "research"
 		}
 	})
 }
@@ -268,6 +283,61 @@ async function handleStopAndFollowup(thread: Thread<unknown>, threadId: string):
 		"*Follow-up sent*\n\nAgent stopped and follow-up sent. Waiting for a response..."
 	)
 	logger.info("stop and followup complete", { agentId: row.agentId })
+}
+
+async function handlePhaseContinue(thread: Thread<unknown>, threadId: string): Promise<void> {
+	logger.info("phase continue action", { threadId })
+
+	const rows = await db
+		.select({
+			agentId: cursorAgentThreads.agentId,
+			agentUrl: cursorAgentThreads.agentUrl,
+			repository: cursorAgentThreads.repository,
+			currentPhase: cursorAgentThreads.currentPhase
+		})
+		.from(cursorAgentThreads)
+		.where(eq(cursorAgentThreads.threadId, threadId))
+
+	const row = rows[0]
+	if (!row) {
+		logger.error("no agent found for phase continue", { threadId })
+		throw errors.new("no agent found for this thread")
+	}
+
+	if (!row.currentPhase) {
+		logger.error("no current phase", { threadId })
+		throw errors.new("no active workflow phase")
+	}
+
+	const next = nextPhase(row.currentPhase)
+	if (!next) {
+		await thread.post("Workflow complete.")
+		return
+	}
+
+	const apiKey = env.CURSOR_API_KEY
+	if (!apiKey) {
+		logger.error("missing CURSOR_API_KEY for phase continue")
+		throw errors.new("CURSOR_API_KEY not configured")
+	}
+
+	const composedPrompt = await composePhasePrompt(next, row.repository)
+
+	await sendFollowup(apiKey, row.agentId, composedPrompt)
+
+	await db
+		.update(cursorAgentThreads)
+		.set({ currentPhase: next })
+		.where(eq(cursorAgentThreads.threadId, threadId))
+
+	await inngest.send({
+		name: "cursor/followup.sent",
+		data: { agentId: row.agentId, threadId, agentUrl: row.agentUrl }
+	})
+
+	const label = phaseLabel(next)
+	await thread.post(`*${label}*\n\nPhase prompt sent to the agent. Waiting for a response...`)
+	logger.info("phase continued", { threadId, phase: next })
 }
 
 async function handleCancelFollowup(thread: Thread<unknown>, threadId: string): Promise<void> {
