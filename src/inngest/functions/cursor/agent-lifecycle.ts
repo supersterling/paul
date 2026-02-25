@@ -10,6 +10,7 @@ import { inngest } from "@/inngest"
 import { buildResultMessage } from "@/inngest/functions/cursor/format"
 import { thread } from "@/lib/bot"
 import { createCursorClient } from "@/lib/clients/cursor/client"
+import { popNext } from "@/lib/queue"
 
 async function postToThread(
 	t: Thread,
@@ -22,6 +23,11 @@ async function postToThread(
 		logger.error("failed to post to slack", { error: result.error, context })
 		throw errors.wrap(result.error, context)
 	}
+}
+
+function truncate(text: string, maxLength: number): string {
+	if (text.length <= maxLength) return text
+	return `${text.slice(0, maxLength - 3)}...`
 }
 
 const agentLifecycle = inngest.createFunction(
@@ -200,6 +206,58 @@ const agentLifecycle = inngest.createFunction(
 
 			const resultMsg = buildResultMessage(completionEvent.data, agent.url, lastMessage)
 			await postToThread(t, resultMsg, logger, "post result to slack")
+		})
+
+		await step.run("check-queue", async () => {
+			const next = await popNext(threadId)
+			if (!next) {
+				logger.info("no queued items", { threadId })
+				return
+			}
+
+			logger.info("launching next queued item", { threadId, queueItemId: next.id })
+
+			const rows = await db
+				.select({
+					repository: cursorAgentThreads.repository,
+					ref: cursorAgentThreads.ref
+				})
+				.from(cursorAgentThreads)
+				.where(eq(cursorAgentThreads.threadId, threadId))
+
+			const row = rows[0]
+			if (!row) {
+				logger.error("no agent thread row for queue launch", { threadId })
+				return
+			}
+
+			if (next.messageId) {
+				const t = thread(threadId)
+				const reactResult = await errors.try(
+					t.adapter.removeReaction(t.id, next.messageId, "hourglass_flowing_sand")
+				)
+				if (reactResult.error) {
+					logger.warn("failed to remove hourglass reaction", { error: reactResult.error })
+				}
+			}
+
+			const t = thread(threadId)
+			const preview = truncate(next.rawMessage, 200)
+			const queueMsg = `*Launching next queued task*\n\n_"${preview}"_`
+			await postToThread(t, queueMsg, logger, "post queue launch to slack")
+
+			await inngest.send({
+				name: "cursor/agent.launch",
+				data: {
+					prompt: next.prompt,
+					repository: row.repository,
+					ref: row.ref,
+					threadId,
+					images: []
+				}
+			})
+
+			logger.info("queued item launched", { threadId, queueItemId: next.id })
 		})
 
 		return { agentId: agent.agentId, status: completionEvent?.data.status }
