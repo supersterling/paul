@@ -124,7 +124,11 @@ async function handleNewMention(thread: Thread, message: IncomingMessage): Promi
 		logger.warn("failed to react to mention", { error: reactResult.error })
 	}
 
-	const composedPrompt = await composeWorkflowPrompt(config.repository, prompt)
+	const composedPrompt = await composeWorkflowPrompt(
+		config.repository,
+		prompt,
+		message.author.userId
+	)
 
 	await inngest.send({
 		name: "cursor/agent.launch",

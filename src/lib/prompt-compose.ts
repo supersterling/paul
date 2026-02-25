@@ -1,7 +1,7 @@
 import * as logger from "@superbuilders/slog"
 import { and, asc, eq } from "drizzle-orm"
 import { db } from "@/db"
-import { promptPhaseOverrides, promptPhases } from "@/db/schemas/prompt"
+import { promptPhaseOverrides, promptPhases, promptUserOverrides } from "@/db/schemas/prompt"
 
 type PromptSection = {
 	header: string
@@ -18,8 +18,16 @@ const RESPONSE_STYLE_SECTION: PromptSection = {
 	position: -1
 }
 
-async function composeWorkflowPrompt(repository: string, featureRequest: string): Promise<string> {
-	logger.debug("composing workflow prompt", { repository, phaseCount: PHASE_ORDER.length })
+async function composeWorkflowPrompt(
+	repository: string,
+	featureRequest: string,
+	slackUserId?: string
+): Promise<string> {
+	logger.debug("composing workflow prompt", {
+		repository,
+		slackUserId,
+		phaseCount: PHASE_ORDER.length
+	})
 
 	const allSections: PromptSection[] = [RESPONSE_STYLE_SECTION]
 
@@ -46,7 +54,27 @@ async function composeWorkflowPrompt(repository: string, featureRequest: string)
 			)
 			.orderBy(asc(promptPhaseOverrides.position))
 
-		const merged = mergeSections(baseSections, overrideSections)
+		let merged = mergeSections(baseSections, overrideSections)
+
+		if (slackUserId) {
+			const userSections = await db
+				.select({
+					header: promptUserOverrides.header,
+					content: promptUserOverrides.content,
+					position: promptUserOverrides.position
+				})
+				.from(promptUserOverrides)
+				.where(
+					and(
+						eq(promptUserOverrides.phase, phase),
+						eq(promptUserOverrides.slackUserId, slackUserId)
+					)
+				)
+				.orderBy(asc(promptUserOverrides.position))
+
+			merged = mergeSections(merged, userSections)
+		}
+
 		for (const section of merged) {
 			allSections.push(section)
 		}
