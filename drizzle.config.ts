@@ -6,7 +6,8 @@ export default {
 	schema: [
 		"./src/db/schemas/agent.ts",
 		"./src/db/schemas/bot-state.ts",
-		"./src/db/schemas/cursor.ts"
+		"./src/db/schemas/cursor.ts",
+		"./src/db/schemas/prompt.ts"
 	],
 	dialect: "postgresql",
 	dbCredentials: {
