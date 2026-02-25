@@ -1,4 +1,5 @@
 import { createSlackAdapter } from "@chat-adapter/slack"
+import type { Attachment } from "chat"
 import * as errors from "@superbuilders/errors"
 import * as logger from "@superbuilders/slog"
 import { Actions, Button, Card, CardText, Chat, type Thread, ThreadImpl } from "chat"
@@ -9,6 +10,8 @@ import { env } from "@/env"
 import { inngest } from "@/inngest"
 import { createCursorClient } from "@/lib/clients/cursor/client"
 import { composeWorkflowPrompt } from "@/lib/prompt-compose"
+import type { CursorImage } from "@/lib/slack-images"
+import { extractImages } from "@/lib/slack-images"
 import { createPostgresState } from "@/lib/state-postgres"
 
 const CHANNEL_REPOS: Record<string, { repository: string; ref: string }> = {
@@ -68,6 +71,15 @@ async function postError(thread: Thread<unknown>, err: Error): Promise<void> {
 	}
 }
 
+async function postWarnings(thread: Thread<unknown>, warnings: string[]): Promise<void> {
+	if (warnings.length === 0) return
+	const text = warnings.map((w) => `> ${w}`).join("\n")
+	const postResult = await errors.try(thread.post(text))
+	if (postResult.error) {
+		logger.warn("failed to post image warnings", { error: postResult.error })
+	}
+}
+
 async function reactToMessage(
 	thread: Thread<unknown>,
 	messageId: string,
@@ -84,6 +96,7 @@ async function reactToMessage(
 type IncomingMessage = {
 	id: string
 	text: string
+	attachments: Attachment[]
 	author: {
 		userId: string
 		userName: string
@@ -124,6 +137,9 @@ async function handleNewMention(thread: Thread, message: IncomingMessage): Promi
 		logger.warn("failed to react to mention", { error: reactResult.error })
 	}
 
+	const { images, warnings } = await extractImages(message.attachments)
+	await postWarnings(thread, warnings)
+
 	const composedPrompt = await composeWorkflowPrompt(
 		config.repository,
 		prompt,
@@ -136,7 +152,8 @@ async function handleNewMention(thread: Thread, message: IncomingMessage): Promi
 			prompt: composedPrompt,
 			repository: config.repository,
 			ref: config.ref,
-			threadId: thread.id
+			threadId: thread.id,
+			images
 		}
 	})
 }
@@ -161,6 +178,9 @@ async function handleSubscribedMessage(thread: Thread, message: IncomingMessage)
 	logger.debug("subscribed message received", { threadId: thread.id, text: followupText })
 
 	await reactToMessage(thread, message.id, "see_no_evil", "add")
+
+	const { images, warnings } = await extractImages(message.attachments)
+	await postWarnings(thread, warnings)
 
 	const rows = await db
 		.select({
@@ -188,7 +208,10 @@ async function handleSubscribedMessage(thread: Thread, message: IncomingMessage)
 	if (row.status === "RUNNING" || row.status === "CREATING") {
 		await db
 			.update(cursorAgentThreads)
-			.set({ pendingFollowup: followupText })
+			.set({
+				pendingFollowup: followupText,
+				pendingFollowupImages: images.length > 0 ? images : null
+			})
 			.where(eq(cursorAgentThreads.threadId, thread.id))
 
 		const card = Card({
@@ -213,7 +236,7 @@ async function handleSubscribedMessage(thread: Thread, message: IncomingMessage)
 		return
 	}
 
-	await sendFollowup(apiKey, row.agentId, followupText)
+	await sendFollowup(apiKey, row.agentId, followupText, images)
 
 	await inngest.send({
 		name: "cursor/followup.sent",
@@ -235,7 +258,8 @@ async function handleStopAndFollowup(thread: Thread<unknown>, threadId: string):
 		.select({
 			agentId: cursorAgentThreads.agentId,
 			agentUrl: cursorAgentThreads.agentUrl,
-			pendingFollowup: cursorAgentThreads.pendingFollowup
+			pendingFollowup: cursorAgentThreads.pendingFollowup,
+			pendingFollowupImages: cursorAgentThreads.pendingFollowupImages
 		})
 		.from(cursorAgentThreads)
 		.where(eq(cursorAgentThreads.threadId, threadId))
@@ -271,11 +295,12 @@ async function handleStopAndFollowup(thread: Thread<unknown>, threadId: string):
 
 	logger.info("agent stopped", { agentId: row.agentId })
 
-	await sendFollowup(apiKey, row.agentId, row.pendingFollowup)
+	const pendingImages = (row.pendingFollowupImages ?? []) as CursorImage[]
+	await sendFollowup(apiKey, row.agentId, row.pendingFollowup, pendingImages)
 
 	await db
 		.update(cursorAgentThreads)
-		.set({ pendingFollowup: null })
+		.set({ pendingFollowup: null, pendingFollowupImages: null })
 		.where(eq(cursorAgentThreads.threadId, threadId))
 
 	await inngest.send({
@@ -294,17 +319,23 @@ async function handleCancelFollowup(thread: Thread<unknown>, threadId: string): 
 
 	await db
 		.update(cursorAgentThreads)
-		.set({ pendingFollowup: null })
+		.set({ pendingFollowup: null, pendingFollowupImages: null })
 		.where(eq(cursorAgentThreads.threadId, threadId))
 
 	await thread.post("Cancelled.")
 }
 
-async function sendFollowup(apiKey: string, agentId: string, text: string): Promise<void> {
+async function sendFollowup(
+	apiKey: string,
+	agentId: string,
+	text: string,
+	images: CursorImage[]
+): Promise<void> {
 	const client = createCursorClient(apiKey)
+	const promptBody = images.length > 0 ? { text, images } : { text }
 	const { error } = await client.POST("/v0/agents/{id}/followup", {
 		params: { path: { id: agentId } },
-		body: { prompt: { text } }
+		body: { prompt: promptBody }
 	})
 
 	if (error) {
