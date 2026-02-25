@@ -1,7 +1,10 @@
 import * as errors from "@superbuilders/errors"
 import type { Thread } from "chat"
+import { eq } from "drizzle-orm"
 import type { Logger } from "inngest"
 import { NonRetriableError } from "inngest"
+import { db } from "@/db"
+import { cursorAgentThreads } from "@/db/schemas/cursor"
 import { env } from "@/env"
 import { inngest } from "@/inngest"
 import { thread } from "@/lib/bot"
@@ -132,6 +135,26 @@ const agentLifecycle = inngest.createFunction(
 			const message = `Agent launched${branchDisplay} \u2014 <${agent.url}|View in Cursor>`
 			logger.info("posting confirmation", { threadId, message })
 			await postToThread(t, message, logger, "post confirmation to slack")
+
+			await db.insert(cursorAgentThreads).values({
+				threadId,
+				agentId: agent.agentId,
+				status: "CREATING",
+				repository,
+				ref,
+				branchName: agent.branchName,
+				agentUrl: agent.url,
+				createdAt: new Date()
+			})
+
+			logger.info("cursor agent thread row inserted", { threadId, agentId: agent.agentId })
+		})
+
+		await step.run("mark-running", async () => {
+			await db
+				.update(cursorAgentThreads)
+				.set({ status: "RUNNING" })
+				.where(eq(cursorAgentThreads.threadId, threadId))
 		})
 
 		const completionEvent = await step.waitForEvent("wait-for-completion", {
@@ -168,6 +191,17 @@ const agentLifecycle = inngest.createFunction(
 
 		await step.run("post-result", async () => {
 			const t = thread(threadId)
+			const finalStatus = completionEvent ? completionEvent.data.status : "EXPIRED"
+
+			await db
+				.update(cursorAgentThreads)
+				.set({
+					status: finalStatus,
+					branchName: completionEvent?.data.branchName
+				})
+				.where(eq(cursorAgentThreads.threadId, threadId))
+
+			logger.info("cursor agent thread status updated", { threadId, status: finalStatus })
 
 			if (!completionEvent) {
 				logger.warn("agent timed out", { agentId: agent.agentId })
