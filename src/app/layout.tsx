@@ -3,6 +3,7 @@ import type { Metadata } from "next"
 import { Geist, Inter } from "next/font/google"
 import Link from "next/link"
 import type * as React from "react"
+import { Toaster } from "sonner"
 import "@/app/globals.css"
 import { cn } from "@/lib/utils"
 
@@ -46,6 +47,7 @@ function RootLayout({ children }: { readonly children: React.ReactNode }) {
 						</div>
 					</header>
 					{children}
+					<Toaster richColors position="bottom-right" />
 				</body>
 			</html>
 		</ClerkProvider>

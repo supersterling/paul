@@ -12,6 +12,7 @@ import {
 	Trash2Icon
 } from "lucide-react"
 import * as React from "react"
+import { toast } from "sonner"
 import {
 	createUserOverride,
 	createUserPhase,
@@ -22,6 +23,16 @@ import {
 	updateUserOverride
 } from "@/app/prompts/actions"
 import type { BaseSection, UserOverride, UserPhase } from "@/app/prompts/page"
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -222,6 +233,12 @@ function Content(props: {
 	const [newPhaseName, setNewPhaseName] = React.useState("")
 	const [creatingPhase, setCreatingPhase] = React.useState(false)
 
+	const [deleteTarget, setDeleteTarget] = React.useState<
+		| { kind: "section"; section: EffectiveSection }
+		| { kind: "phase"; phase: string }
+		| null
+	>(null)
+
 	const effectivePhases = computeEffectivePhases(userContext.phases)
 
 	const initialExpandRef = React.useRef(false)
@@ -280,7 +297,10 @@ function Content(props: {
 				next.delete(bk)
 				return next
 			})
-			if (result.error) return
+			if (result.error) {
+				toast.error("Failed to save section")
+				return
+			}
 		} else {
 			const result = await errors.try(
 				createUserOverride({
@@ -296,7 +316,10 @@ function Content(props: {
 				next.delete(bk)
 				return next
 			})
-			if (result.error) return
+			if (result.error) {
+				toast.error("Failed to save section")
+				return
+			}
 		}
 
 		setEditBuffers((prev) => {
@@ -305,6 +328,7 @@ function Content(props: {
 			return next
 		})
 		flashSuccess(bk)
+		toast.success(`Saved "${section.header}"`)
 	}
 
 	async function handleDeleteSection(section: EffectiveSection) {
@@ -318,7 +342,10 @@ function Content(props: {
 			next.delete(bk)
 			return next
 		})
-		if (!deleteResult) return
+		if (!deleteResult) {
+			toast.error("Failed to delete section")
+			return
+		}
 
 		if (selected && selected.kind === "section" && selected.header === section.header) {
 			setSelected(null)
@@ -328,6 +355,7 @@ function Content(props: {
 			delete next[bk]
 			return next
 		})
+		toast.success(`Deleted "${section.header}"`)
 	}
 
 	async function handleResetToDefault(section: EffectiveSection) {
@@ -343,13 +371,17 @@ function Content(props: {
 			next.delete(bk)
 			return next
 		})
-		if (result.error) return
+		if (result.error) {
+			toast.error("Failed to reset section")
+			return
+		}
 
 		setEditBuffers((prev) => {
 			const next = { ...prev }
 			delete next[bk]
 			return next
 		})
+		toast.success(`Reset "${section.header}" to default`)
 	}
 
 	async function handleCreateSection() {
@@ -370,8 +402,12 @@ function Content(props: {
 			})
 		)
 		setCreating(false)
-		if (result.error) return
+		if (result.error) {
+			toast.error("Failed to create section")
+			return
+		}
 
+		toast.success(`Created "${newHeader}"`)
 		setSelected({ kind: "section", phase: selected.phase, header: newHeader })
 		setNewHeader("")
 		setNewContent("")
@@ -390,8 +426,12 @@ function Content(props: {
 			})
 		)
 		setCreatingPhase(false)
-		if (result.error) return
+		if (result.error) {
+			toast.error("Failed to create phase")
+			return
+		}
 
+		toast.success(`Created phase "${newPhaseName}"`)
 		setExpandedPhases((prev) => new Set(prev).add(newPhaseName))
 		setNewPhaseName("")
 		setSelected(null)
@@ -403,8 +443,12 @@ function Content(props: {
 		const result = await errors.try(
 			deleteUserPhase({ slackUserId: userContext.slackUserId, phase })
 		)
-		if (result.error) return
+		if (result.error) {
+			toast.error("Failed to delete phase")
+			return
+		}
 
+		toast.success(`Deleted phase "${phase}"`)
 		if (selected && selected.kind !== "new-phase" && selected.phase === phase) {
 			setSelected(null)
 		}
@@ -505,7 +549,7 @@ function Content(props: {
 															phase
 														})
 													}}
-													onDeletePhase={() => handleDeletePhase(phase)}
+													onDeletePhase={() => setDeleteTarget({ kind: "phase", phase })}
 												>
 													{sections?.map((section) => {
 														const isSelected =
@@ -567,7 +611,7 @@ function Content(props: {
 											setNewPosition("100")
 											setSelected({ kind: "new-section", phase })
 										}}
-										onDeletePhase={() => handleDeletePhase(phase)}
+										onDeletePhase={() => setDeleteTarget({ kind: "phase", phase })}
 									>
 										{sections?.map((section) => {
 											const isSelected =
@@ -643,7 +687,7 @@ function Content(props: {
 						onBufferChange={(key, v) => setEditBuffers((prev) => ({ ...prev, [key]: v }))}
 						bufferKey={currentSection ? bufferKey(currentSection) : undefined}
 						onSave={handleSave}
-						onDelete={handleDeleteSection}
+						onDelete={(section) => setDeleteTarget({ kind: "section", section })}
 						onResetToDefault={handleResetToDefault}
 						newHeader={newHeader}
 						newContent={newContent}
@@ -656,7 +700,57 @@ function Content(props: {
 					/>
 				)}
 			</div>
+
+			<DeleteConfirmDialog
+				target={deleteTarget}
+				onCancel={() => setDeleteTarget(null)}
+				onConfirm={async () => {
+					if (!deleteTarget) return
+					if (deleteTarget.kind === "section") {
+						await handleDeleteSection(deleteTarget.section)
+					} else {
+						await handleDeletePhase(deleteTarget.phase)
+					}
+					setDeleteTarget(null)
+				}}
+			/>
 		</div>
+	)
+}
+
+function DeleteConfirmDialog(props: {
+	target:
+		| { kind: "section"; section: EffectiveSection }
+		| { kind: "phase"; phase: string }
+		| null
+	onCancel: () => void
+	onConfirm: () => void
+}) {
+	const isOpen = props.target !== null
+
+	const title = props.target?.kind === "phase" ? "Delete phase?" : "Delete section?"
+	const description =
+		props.target?.kind === "phase"
+			? `This will remove the "${props.target.phase}" phase and all its custom sections.`
+			: props.target?.kind === "section"
+				? `This will delete "${props.target.section.header}" from your overrides.`
+				: ""
+
+	return (
+		<AlertDialog open={isOpen} onOpenChange={(open) => { if (!open) props.onCancel() }}>
+			<AlertDialogContent size="sm">
+				<AlertDialogHeader>
+					<AlertDialogTitle>{title}</AlertDialogTitle>
+					<AlertDialogDescription>{description}</AlertDialogDescription>
+				</AlertDialogHeader>
+				<AlertDialogFooter>
+					<AlertDialogCancel>Cancel</AlertDialogCancel>
+					<AlertDialogAction variant="destructive" onClick={props.onConfirm}>
+						Delete
+					</AlertDialogAction>
+				</AlertDialogFooter>
+			</AlertDialogContent>
+		</AlertDialog>
 	)
 }
 
