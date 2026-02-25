@@ -1,6 +1,6 @@
 import * as errors from "@superbuilders/errors"
 import type { Thread } from "chat"
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import type { Logger } from "inngest"
 import { NonRetriableError } from "inngest"
 import { db } from "@/db"
@@ -160,15 +160,23 @@ const agentLifecycle = inngest.createFunction(
 			const t = thread(threadId)
 			const finalStatus = completionEvent ? completionEvent.data.status : "EXPIRED"
 
-			await db
+			const claimed = await db
 				.update(cursorAgentThreads)
 				.set({
 					status: finalStatus,
 					branchName: completionEvent?.data.branchName
 				})
-				.where(eq(cursorAgentThreads.threadId, threadId))
+				.where(
+					and(eq(cursorAgentThreads.threadId, threadId), eq(cursorAgentThreads.status, "RUNNING"))
+				)
+				.returning({ threadId: cursorAgentThreads.threadId })
 
-			logger.info("cursor agent thread status updated", { threadId, status: finalStatus })
+			if (claimed.length === 0) {
+				logger.info("skipping post-result, another lifecycle claimed this thread", {
+					threadId
+				})
+				return
+			}
 
 			if (!completionEvent) {
 				logger.warn("agent timed out", { agentId: agent.agentId })

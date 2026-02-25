@@ -1,5 +1,5 @@
 import * as errors from "@superbuilders/errors"
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { NonRetriableError } from "inngest"
 import { db } from "@/db"
 import { cursorAgentThreads } from "@/db/schemas/cursor"
@@ -72,12 +72,20 @@ const followupLifecycle = inngest.createFunction(
 			const t = thread(threadId)
 			const finalStatus = completionEvent ? completionEvent.data.status : "EXPIRED"
 
-			await db
+			const claimed = await db
 				.update(cursorAgentThreads)
 				.set({ status: finalStatus, branchName: completionEvent?.data.branchName })
-				.where(eq(cursorAgentThreads.threadId, threadId))
+				.where(
+					and(eq(cursorAgentThreads.threadId, threadId), eq(cursorAgentThreads.status, "RUNNING"))
+				)
+				.returning({ threadId: cursorAgentThreads.threadId })
 
-			logger.info("followup status updated", { threadId, status: finalStatus })
+			if (claimed.length === 0) {
+				logger.info("skipping post-followup-result, another lifecycle claimed this thread", {
+					threadId
+				})
+				return
+			}
 
 			if (!completionEvent) {
 				logger.warn("agent timed out after followup", { agentId })
