@@ -25,7 +25,15 @@ async function postToThread(
 }
 
 const agentLifecycle = inngest.createFunction(
-	{ id: "cursor/agent-lifecycle" },
+	{
+		id: "cursor/agent-lifecycle",
+		cancelOn: [
+			{
+				event: "cursor/followup.sent",
+				if: "event.data.threadId == async.data.threadId"
+			}
+		]
+	},
 	{ event: "cursor/agent.launch" },
 	async ({ event, logger, step }) => {
 		const { prompt, repository, ref, threadId } = event.data

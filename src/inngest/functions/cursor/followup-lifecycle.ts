@@ -10,7 +10,15 @@ import { thread } from "@/lib/bot"
 import { createCursorClient } from "@/lib/clients/cursor/client"
 
 const followupLifecycle = inngest.createFunction(
-	{ id: "cursor/followup-lifecycle" },
+	{
+		id: "cursor/followup-lifecycle",
+		cancelOn: [
+			{
+				event: "cursor/followup.sent",
+				if: "event.data.threadId == async.data.threadId"
+			}
+		]
+	},
 	{ event: "cursor/followup.sent" },
 	async ({ event, logger, step }) => {
 		const { agentId, threadId, agentUrl } = event.data
