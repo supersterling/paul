@@ -125,6 +125,21 @@ const schema = {
 		selectedApproach: z.unknown(),
 		analysisOutput: z.unknown(),
 		judgingOutput: z.unknown()
+	}),
+	"cursor/agent.launch": z.object({
+		prompt: z.string().min(1),
+		repository: z.string().min(1),
+		ref: z.string().min(1),
+		threadId: z.string().min(1)
+	}),
+	"cursor/agent.finished": z.object({
+		agentId: z.string().min(1),
+		status: z.enum(["FINISHED", "ERROR"]),
+		summary: z.string().optional(),
+		repository: z.string().optional(),
+		branchName: z.string().optional(),
+		prUrl: z.string().optional(),
+		agentUrl: z.string().optional()
 	})
 }
 
