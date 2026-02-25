@@ -101,15 +101,12 @@ async function deleteUserPhase(input: unknown): Promise<void> {
 	const { slackUserId, phase } = parsed.data
 	logger.info("deleting user phase", { slackUserId, phase })
 
+	await ensureUserPhasesMaterialized(slackUserId)
+
 	const phaseResult = await errors.try(
 		db
 			.delete(promptUserPhases)
-			.where(
-				and(
-					eq(promptUserPhases.slackUserId, slackUserId),
-					eq(promptUserPhases.phase, phase)
-				)
-			)
+			.where(and(eq(promptUserPhases.slackUserId, slackUserId), eq(promptUserPhases.phase, phase)))
 	)
 	if (phaseResult.error) {
 		logger.error("failed to delete user phase", { error: phaseResult.error })
@@ -120,10 +117,7 @@ async function deleteUserPhase(input: unknown): Promise<void> {
 		db
 			.delete(promptUserOverrides)
 			.where(
-				and(
-					eq(promptUserOverrides.slackUserId, slackUserId),
-					eq(promptUserOverrides.phase, phase)
-				)
+				and(eq(promptUserOverrides.slackUserId, slackUserId), eq(promptUserOverrides.phase, phase))
 			)
 	)
 	if (sectionsResult.error) {
@@ -155,12 +149,7 @@ async function reorderUserPhases(input: unknown): Promise<void> {
 		db
 			.update(promptUserPhases)
 			.set({ position: idx * 10 })
-			.where(
-				and(
-					eq(promptUserPhases.slackUserId, slackUserId),
-					eq(promptUserPhases.phase, phase)
-				)
-			)
+			.where(and(eq(promptUserPhases.slackUserId, slackUserId), eq(promptUserPhases.phase, phase)))
 	)
 
 	const result = await errors.try(Promise.all(updates))
@@ -283,7 +272,10 @@ async function reorderPhaseSections(input: unknown): Promise<void> {
 
 	const updates = items.map((item, idx) => {
 		const tbl = item.table === "base" ? promptPhases : promptUserOverrides
-		return db.update(tbl).set({ position: idx * 10 }).where(eq(tbl.id, item.id))
+		return db
+			.update(tbl)
+			.set({ position: idx * 10 })
+			.where(eq(tbl.id, item.id))
 	})
 
 	const result = await errors.try(Promise.all(updates))

@@ -179,10 +179,7 @@ function computeEffectiveSections(
 	return result
 }
 
-async function performDelete(
-	section: EffectiveSection,
-	slackUserId: string
-): Promise<boolean> {
+async function performDelete(section: EffectiveSection, slackUserId: string): Promise<boolean> {
 	if (section.source === "default") {
 		const result = await errors.try(
 			createUserOverride({
@@ -277,9 +274,7 @@ function Content(props: {
 		setSavingIds((prev) => new Set(prev).add(bk))
 
 		if (section.overrideId) {
-			const result = await errors.try(
-				updateUserOverride({ id: section.overrideId, content })
-			)
+			const result = await errors.try(updateUserOverride({ id: section.overrideId, content }))
 			setSavingIds((prev) => {
 				const next = new Set(prev)
 				next.delete(bk)
@@ -478,12 +473,7 @@ function Content(props: {
 									const colors = getPhaseColor(idx)
 
 									return (
-										<SortableItem
-											key={item.id}
-											value={item.id}
-											className="rounded"
-											asChild
-										>
+										<SortableItem key={item.id} value={item.id} className="rounded" asChild>
 											<div>
 												<PhaseFolder
 													phase={phase}
@@ -515,16 +505,13 @@ function Content(props: {
 															phase
 														})
 													}}
-													onDeletePhase={() =>
-														handleDeletePhase(phase)
-													}
+													onDeletePhase={() => handleDeletePhase(phase)}
 												>
 													{sections?.map((section) => {
 														const isSelected =
 															selected?.kind === "section" &&
 															selected.phase === phase &&
-															selected.header ===
-																section.header
+															selected.header === section.header
 														return (
 															<SectionTreeItem
 																key={`${section.phase}:${section.header}`}
@@ -580,6 +567,7 @@ function Content(props: {
 											setNewPosition("100")
 											setSelected({ kind: "new-section", phase })
 										}}
+										onDeletePhase={() => handleDeletePhase(phase)}
 									>
 										{sections?.map((section) => {
 											const isSelected =
@@ -652,9 +640,7 @@ function Content(props: {
 						savingIds={savingIds}
 						successIds={successIds}
 						hasSlack={hasSlack}
-						onBufferChange={(key, v) =>
-							setEditBuffers((prev) => ({ ...prev, [key]: v }))
-						}
+						onBufferChange={(key, v) => setEditBuffers((prev) => ({ ...prev, [key]: v }))}
 						bufferKey={currentSection ? bufferKey(currentSection) : undefined}
 						onSave={handleSave}
 						onDelete={handleDeleteSection}
@@ -731,9 +717,7 @@ function PhaseFolder(props: {
 					</div>
 				)}
 			</div>
-			{props.isExpanded && (
-				<div className="ml-3 border-l pl-2">{props.children}</div>
-			)}
+			{props.isExpanded && <div className="ml-3 border-l pl-2">{props.children}</div>}
 		</div>
 	)
 }
@@ -757,12 +741,8 @@ function SectionTreeItem(props: {
 					: "text-foreground/80 hover:bg-accent/50"
 			)}
 		>
-			{isModified && (
-				<CircleDotIcon className="size-2.5 shrink-0 text-chart-2" />
-			)}
-			<span className={cn("truncate", !isModified && "pl-[14px]")}>
-				{props.header}
-			</span>
+			{isModified && <CircleDotIcon className="size-2.5 shrink-0 text-chart-2" />}
+			<span className={cn("truncate", !isModified && "pl-[14px]")}>{props.header}</span>
 		</button>
 	)
 }
@@ -798,9 +778,7 @@ function ReorderPanel(props: {
 								<SortableItemHandle className="shrink-0 text-muted-foreground">
 									<GripVerticalIcon className="size-3" />
 								</SortableItemHandle>
-								<span className="truncate text-foreground/80">
-									{section.header}
-								</span>
+								<span className="truncate text-foreground/80">{section.header}</span>
 							</SortableItem>
 						))}
 					</SortableContent>
@@ -879,9 +857,7 @@ function EditorPanel(props: {
 				onSave={() => props.onSave(section)}
 				onDelete={() => props.onDelete(section)}
 				onResetToDefault={
-					section.source === "customized"
-						? () => props.onResetToDefault(section)
-						: undefined
+					section.source === "customized" ? () => props.onResetToDefault(section) : undefined
 				}
 			/>
 			<div className="flex-1 overflow-y-auto p-4">
@@ -925,9 +901,7 @@ function EditorHeader(props: {
 				{props.section.phase}
 			</Badge>
 			{props.section.source !== "default" && (
-				<span className="font-medium text-[10px] text-chart-2 uppercase">
-					{sourceLabel}
-				</span>
+				<span className="font-medium text-[10px] text-chart-2 uppercase">{sourceLabel}</span>
 			)}
 			<h2 className="flex-1 font-semibold text-sm">{props.section.header}</h2>
 			{props.hasSlack && (
