@@ -1,4 +1,4 @@
-import { integer, pgSchema, text, uuid } from "drizzle-orm/pg-core"
+import { integer, pgSchema, text, unique, uuid } from "drizzle-orm/pg-core"
 
 const agentSchema = pgSchema("agent")
 
@@ -19,4 +19,17 @@ const promptPhaseOverrides = agentSchema.table("prompt_phase_overrides", {
 	position: integer("position").notNull()
 })
 
-export { promptPhaseOverrides, promptPhases }
+const promptUserOverrides = agentSchema.table(
+	"prompt_user_overrides",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		slackUserId: text("slack_user_id").notNull(),
+		phase: text("phase").notNull(),
+		header: text("header").notNull(),
+		content: text("content").notNull(),
+		position: integer("position").notNull()
+	},
+	(t) => [unique("prompt_user_overrides_user_phase_header").on(t.slackUserId, t.phase, t.header)]
+)
+
+export { promptPhaseOverrides, promptPhases, promptUserOverrides }
