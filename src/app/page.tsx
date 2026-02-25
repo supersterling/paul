@@ -1,7 +1,7 @@
-import { RealtimeDemo } from "@/app/realtime-demo"
+import { redirect } from "next/navigation"
 
 function Page() {
-	return <RealtimeDemo />
+	redirect("/prompts")
 }
 
 export default Page
