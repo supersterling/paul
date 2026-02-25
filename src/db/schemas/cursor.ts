@@ -1,4 +1,4 @@
-import { pgSchema, text, timestamp } from "drizzle-orm/pg-core"
+import { jsonb, pgSchema, text, timestamp } from "drizzle-orm/pg-core"
 
 const agentSchema = pgSchema("agent")
 
@@ -11,6 +11,7 @@ const cursorAgentThreads = agentSchema.table("cursor_agent_threads", {
 	branchName: text("branch_name"),
 	agentUrl: text("agent_url").notNull(),
 	pendingFollowup: text("pending_followup"),
+	pendingFollowupImages: jsonb("pending_followup_images"),
 	createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull()
 })
 
