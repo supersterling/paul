@@ -2,6 +2,7 @@ import { env } from "@/env"
 import { codeFunction } from "@/inngest/functions/agents/code"
 import { exploreFunction } from "@/inngest/functions/agents/explore"
 import { orchestrateFunction } from "@/inngest/functions/agents/orchestrate"
+import { agentLifecycle } from "@/inngest/functions/cursor/agent-lifecycle"
 import { echoFunction } from "@/inngest/functions/debug/echo"
 import { analysisFunction } from "@/inngest/functions/pipeline/analysis"
 import { approachesFunction } from "@/inngest/functions/pipeline/approaches"
@@ -12,6 +13,7 @@ import { createFunction } from "@/inngest/functions/sandbox/create"
 import { stopFunction } from "@/inngest/functions/sandbox/stop"
 
 const coreFunctions = [
+	agentLifecycle,
 	codeFunction,
 	exploreFunction,
 	orchestrateFunction,
