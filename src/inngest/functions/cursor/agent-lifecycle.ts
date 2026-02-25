@@ -36,7 +36,7 @@ const agentLifecycle = inngest.createFunction(
 	},
 	{ event: "cursor/agent.launch" },
 	async ({ event, logger, step }) => {
-		const { prompt, repository, ref, threadId } = event.data
+		const { prompt, repository, ref, threadId, images } = event.data
 
 		const apiKey = env.CURSOR_API_KEY
 		if (!apiKey) {
@@ -52,11 +52,17 @@ const agentLifecycle = inngest.createFunction(
 
 		const agent = await step.run("launch-agent", async () => {
 			const client = createCursorClient(apiKey)
-			logger.info("launching cursor agent", { repository, ref, prompt })
+			logger.info("launching cursor agent", {
+				repository,
+				ref,
+				prompt,
+				imageCount: images.length
+			})
 
+			const promptBody = images.length > 0 ? { text: prompt, images } : { text: prompt }
 			const { data, error } = await client.POST("/v0/agents", {
 				body: {
-					prompt: { text: prompt },
+					prompt: promptBody,
 					source: { repository: `https://github.com/${repository}`, ref },
 					target: {
 						autoCreatePr: true,
