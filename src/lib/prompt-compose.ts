@@ -1,7 +1,12 @@
 import * as logger from "@superbuilders/slog"
 import { and, asc, eq } from "drizzle-orm"
 import { db } from "@/db"
-import { promptPhaseOverrides, promptPhases, promptUserOverrides } from "@/db/schemas/prompt"
+import {
+	promptPhaseOverrides,
+	promptPhases,
+	promptUserOverrides,
+	promptUserPhases
+} from "@/db/schemas/prompt"
 
 type PromptSection = {
 	header: string
@@ -9,7 +14,7 @@ type PromptSection = {
 	position: number
 }
 
-const PHASE_ORDER = ["research", "propose", "build", "review", "pr"]
+import { PHASE_ORDER } from "@/lib/prompt-constants"
 
 const RESPONSE_STYLE_SECTION: PromptSection = {
 	header: "Response Style",
@@ -18,20 +23,36 @@ const RESPONSE_STYLE_SECTION: PromptSection = {
 	position: -1
 }
 
+async function resolvePhaseOrder(slackUserId: string | undefined): Promise<string[]> {
+	if (!slackUserId) return PHASE_ORDER
+
+	const userPhases = await db
+		.select({ phase: promptUserPhases.phase })
+		.from(promptUserPhases)
+		.where(eq(promptUserPhases.slackUserId, slackUserId))
+		.orderBy(asc(promptUserPhases.position))
+
+	if (userPhases.length === 0) return PHASE_ORDER
+
+	return userPhases.map((p) => p.phase)
+}
+
 async function composeWorkflowPrompt(
 	repository: string,
 	featureRequest: string,
 	slackUserId?: string
 ): Promise<string> {
+	const phases = await resolvePhaseOrder(slackUserId)
+
 	logger.debug("composing workflow prompt", {
 		repository,
 		slackUserId,
-		phaseCount: PHASE_ORDER.length
+		phaseCount: phases.length
 	})
 
 	const allSections: PromptSection[] = [RESPONSE_STYLE_SECTION]
 
-	for (const phase of PHASE_ORDER) {
+	for (const phase of phases) {
 		const baseSections = await db
 			.select({
 				header: promptPhases.header,
@@ -99,18 +120,22 @@ function mergeSections(base: PromptSection[], overrides: PromptSection[]): Promp
 		const matchesBase = base.some((b) => b.header === override.header)
 		if (matchesBase) {
 			overrideMap.set(override.header, override)
-		} else {
+		} else if (override.content.length > 0) {
 			newSections.push(override)
 		}
 	}
 
-	const merged = base.map((section) => {
+	const merged: PromptSection[] = []
+	for (const section of base) {
 		const override = overrideMap.get(section.header)
 		if (override) {
-			return { ...section, content: override.content }
+			if (override.content.length > 0) {
+				merged.push({ ...section, content: override.content })
+			}
+		} else {
+			merged.push(section)
 		}
-		return section
-	})
+	}
 
 	for (const section of newSections) {
 		merged.push(section)
@@ -121,4 +146,4 @@ function mergeSections(base: PromptSection[], overrides: PromptSection[]): Promp
 	return merged
 }
 
-export { PHASE_ORDER, composeWorkflowPrompt }
+export { composeWorkflowPrompt }

@@ -3,7 +3,7 @@ import { asc, eq } from "drizzle-orm"
 import * as React from "react"
 import { Content } from "@/app/prompts/content"
 import { db } from "@/db"
-import { promptPhases, promptUserOverrides } from "@/db/schemas/prompt"
+import { promptPhases, promptUserOverrides, promptUserPhases } from "@/db/schemas/prompt"
 
 const getBaseSections = db
 	.select({
@@ -22,36 +22,48 @@ type BaseSection = Awaited<ReturnType<typeof getBaseSections.execute>>[number]
 type UserContext = {
 	slackUserId: string | undefined
 	overrides: UserOverride[]
+	phases: UserPhase[]
 }
 
 function Page() {
 	const baseSectionsPromise = getBaseSections.execute()
 
 	const userContextPromise: Promise<UserContext> = currentUser().then(async (user) => {
-		if (!user) return { slackUserId: undefined, overrides: [] }
+		if (!user) return { slackUserId: undefined, overrides: [], phases: [] }
 
 		const slackAccount = user.externalAccounts.find((a) => a.provider === "oauth_slack")
 		const slackUserId = slackAccount?.externalId
 
-		if (!slackUserId) return { slackUserId: undefined, overrides: [] }
+		if (!slackUserId) return { slackUserId: undefined, overrides: [], phases: [] }
 
-		const overrides = await db
-			.select({
-				id: promptUserOverrides.id,
-				phase: promptUserOverrides.phase,
-				header: promptUserOverrides.header,
-				content: promptUserOverrides.content,
-				position: promptUserOverrides.position
-			})
-			.from(promptUserOverrides)
-			.where(eq(promptUserOverrides.slackUserId, slackUserId))
-			.orderBy(asc(promptUserOverrides.phase), asc(promptUserOverrides.position))
+		const [overrides, phases] = await Promise.all([
+			db
+				.select({
+					id: promptUserOverrides.id,
+					phase: promptUserOverrides.phase,
+					header: promptUserOverrides.header,
+					content: promptUserOverrides.content,
+					position: promptUserOverrides.position
+				})
+				.from(promptUserOverrides)
+				.where(eq(promptUserOverrides.slackUserId, slackUserId))
+				.orderBy(asc(promptUserOverrides.phase), asc(promptUserOverrides.position)),
+			db
+				.select({
+					id: promptUserPhases.id,
+					phase: promptUserPhases.phase,
+					position: promptUserPhases.position
+				})
+				.from(promptUserPhases)
+				.where(eq(promptUserPhases.slackUserId, slackUserId))
+				.orderBy(asc(promptUserPhases.position))
+		])
 
-		return { slackUserId, overrides }
+		return { slackUserId, overrides, phases }
 	})
 
 	return (
-		<main className="mx-auto max-w-4xl px-6 py-8">
+		<main className="h-[calc(100vh-3.5rem)] overflow-hidden">
 			<React.Suspense
 				fallback={<div className="text-muted-foreground text-sm">Loading prompts...</div>}
 			>
@@ -72,5 +84,11 @@ type UserOverride = {
 	position: number
 }
 
-export type { BaseSection, UserOverride }
+type UserPhase = {
+	id: string
+	phase: string
+	position: number
+}
+
+export type { BaseSection, UserOverride, UserPhase }
 export default Page

@@ -11,7 +11,7 @@ import { inngest } from "@/inngest"
 import { createCursorClient } from "@/lib/clients/cursor/client"
 import { composeWorkflowPrompt } from "@/lib/prompt-compose"
 import type { CursorImage } from "@/lib/slack-images"
-import { extractImages } from "@/lib/slack-images"
+import { extractImages, parseCursorImages } from "@/lib/slack-images"
 import { createPostgresState } from "@/lib/state-postgres"
 
 const CHANNEL_REPOS: Record<string, { repository: string; ref: string }> = {
@@ -295,7 +295,7 @@ async function handleStopAndFollowup(thread: Thread<unknown>, threadId: string):
 
 	logger.info("agent stopped", { agentId: row.agentId })
 
-	const pendingImages = (row.pendingFollowupImages ?? []) as CursorImage[]
+	const pendingImages = parseCursorImages(row.pendingFollowupImages)
 	await sendFollowup(apiKey, row.agentId, row.pendingFollowup, pendingImages)
 
 	await db

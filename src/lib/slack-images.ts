@@ -1,16 +1,23 @@
 import type { Attachment } from "chat"
 import * as errors from "@superbuilders/errors"
 import * as logger from "@superbuilders/slog"
+import { z } from "zod"
 
 const MAX_IMAGES = 5
 
-type CursorImage = {
-	data: string
-	dimension?: {
-		width: number
-		height: number
-	}
-}
+const CursorImageSchema = z.object({
+	data: z.string().min(1),
+	dimension: z
+		.object({
+			width: z.number(),
+			height: z.number()
+		})
+		.optional()
+})
+
+type CursorImage = z.infer<typeof CursorImageSchema>
+
+const CursorImageArraySchema = z.array(CursorImageSchema)
 
 type ExtractionResult = {
 	images: CursorImage[]
@@ -81,5 +88,14 @@ async function extractImages(attachments: Attachment[]): Promise<ExtractionResul
 	return { images, warnings }
 }
 
-export { extractImages }
+function parseCursorImages(raw: unknown): CursorImage[] {
+	const result = CursorImageArraySchema.safeParse(raw)
+	if (!result.success) {
+		logger.warn("invalid cursor images data", { error: result.error })
+		return []
+	}
+	return result.data
+}
+
+export { CursorImageArraySchema, CursorImageSchema, extractImages, parseCursorImages }
 export type { CursorImage, ExtractionResult }

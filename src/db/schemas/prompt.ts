@@ -32,4 +32,15 @@ const promptUserOverrides = agentSchema.table(
 	(t) => [unique("prompt_user_overrides_user_phase_header").on(t.slackUserId, t.phase, t.header)]
 )
 
-export { promptPhaseOverrides, promptPhases, promptUserOverrides }
+const promptUserPhases = agentSchema.table(
+	"prompt_user_phases",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		slackUserId: text("slack_user_id").notNull(),
+		phase: text("phase").notNull(),
+		position: integer("position").notNull()
+	},
+	(t) => [unique("prompt_user_phases_user_phase").on(t.slackUserId, t.phase)]
+)
+
+export { promptPhaseOverrides, promptPhases, promptUserOverrides, promptUserPhases }

@@ -4,6 +4,7 @@ import { EventSchemas, Inngest, type Logger } from "inngest"
 import { z } from "zod"
 import { env } from "@/env"
 import { CtaRequestEventSchema, CtaResponseEventSchema } from "@/lib/agent/cta"
+import { CursorImageArraySchema } from "@/lib/slack-images"
 
 const schema = {
 	"superstarter/hello": z.object({
@@ -131,17 +132,7 @@ const schema = {
 		repository: z.string().min(1),
 		ref: z.string().min(1),
 		threadId: z.string().min(1),
-		images: z.array(
-			z.object({
-				data: z.string().min(1),
-				dimension: z
-					.object({
-						width: z.number(),
-						height: z.number()
-					})
-					.optional()
-			})
-		)
+		images: CursorImageArraySchema
 	}),
 	"cursor/followup.sent": z.object({
 		agentId: z.string().min(1),
