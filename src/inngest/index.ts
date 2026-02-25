@@ -130,7 +130,9 @@ const schema = {
 		prompt: z.string().min(1),
 		repository: z.string().min(1),
 		ref: z.string().min(1),
-		threadId: z.string().min(1)
+		threadId: z.string().min(1),
+		workflowActive: z.boolean().default(false),
+		currentPhase: z.string().optional()
 	}),
 	"cursor/followup.sent": z.object({
 		agentId: z.string().min(1),

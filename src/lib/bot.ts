@@ -92,7 +92,14 @@ type IncomingMessage = {
 	}
 }
 
+const BOT_MENTION_PATTERN = /^@U0AGS2FM1NX/
+
 async function handleNewMention(thread: Thread, message: IncomingMessage): Promise<void> {
+	if (!BOT_MENTION_PATTERN.test(message.text)) {
+		logger.debug("ignoring non-leading mention", { threadId: thread.id })
+		return
+	}
+
 	const prompt = message.text.replace(/@U0AGS2FM1NX/g, "@Cursor").trim()
 	if (!prompt) {
 		await thread.post("Give me a task and I'll launch a Cursor agent for it.")
@@ -120,7 +127,8 @@ async function handleNewMention(thread: Thread, message: IncomingMessage): Promi
 			prompt,
 			repository: config.repository,
 			ref: config.ref,
-			threadId: thread.id
+			threadId: thread.id,
+			workflowActive: false
 		}
 	})
 }
@@ -307,4 +315,4 @@ function thread(threadId: string): Thread {
 	})
 }
 
-export { bot, CHANNEL_REPOS, thread }
+export { CHANNEL_REPOS, bot, thread }
