@@ -5,6 +5,8 @@ import {
 	ChevronDownIcon,
 	ChevronRightIcon,
 	CircleDotIcon,
+	CopyIcon,
+	EyeIcon,
 	FileTextIcon,
 	GripVerticalIcon,
 	PlusIcon,
@@ -34,6 +36,14 @@ import {
 	AlertDialogTitle
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle
+} from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -190,6 +200,31 @@ function computeEffectiveSections(
 	return result
 }
 
+const RESPONSE_STYLE_HEADER = "Response Style"
+const RESPONSE_STYLE_CONTENT =
+	"Keep responses under 10 lines. Be terse. The user will ask you to expand if needed. Do not produce wall-of-text responses."
+
+function composePreview(
+	effectivePhases: string[],
+	effectiveByPhase: Map<string, EffectiveSection[]>
+): string {
+	const blocks: string[] = []
+
+	blocks.push(`## ${RESPONSE_STYLE_HEADER}\n\n${RESPONSE_STYLE_CONTENT}`)
+
+	for (const phase of effectivePhases) {
+		const sections = effectiveByPhase.get(phase)
+		if (!sections) continue
+		for (const section of sections) {
+			blocks.push(`## ${section.header}\n\n${section.content}`)
+		}
+	}
+
+	blocks.push("## Feature Request\n\n[Your feature request will appear here]")
+
+	return blocks.join("\n\n")
+}
+
 async function performDelete(section: EffectiveSection, slackUserId: string): Promise<boolean> {
 	if (section.source === "default") {
 		const result = await errors.try(
@@ -238,6 +273,7 @@ function Content(props: {
 		| { kind: "phase"; phase: string }
 		| null
 	>(null)
+	const [previewOpen, setPreviewOpen] = React.useState(false)
 
 	const effectivePhases = computeEffectivePhases(userContext.phases)
 
@@ -654,6 +690,15 @@ function Content(props: {
 						</button>
 					)}
 
+					<button
+						type="button"
+						onClick={() => setPreviewOpen(true)}
+						className="mt-1 flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-muted-foreground text-xs hover:bg-accent hover:text-foreground"
+					>
+						<EyeIcon className="size-3.5" />
+						Preview full prompt
+					</button>
+
 					{!hasSlack && (
 						<p className="mt-4 px-2 text-muted-foreground text-xs">
 							Link Slack to create and edit sections.
@@ -701,6 +746,13 @@ function Content(props: {
 				)}
 			</div>
 
+			<PromptPreviewDialog
+				open={previewOpen}
+				onOpenChange={setPreviewOpen}
+				effectivePhases={effectivePhases}
+				effectiveByPhase={effectiveByPhase}
+			/>
+
 			<DeleteConfirmDialog
 				target={deleteTarget}
 				onCancel={() => setDeleteTarget(null)}
@@ -715,6 +767,44 @@ function Content(props: {
 				}}
 			/>
 		</div>
+	)
+}
+
+function PromptPreviewDialog(props: {
+	open: boolean
+	onOpenChange: (open: boolean) => void
+	effectivePhases: string[]
+	effectiveByPhase: Map<string, EffectiveSection[]>
+}) {
+	const preview = composePreview(props.effectivePhases, props.effectiveByPhase)
+
+	function handleCopy() {
+		navigator.clipboard.writeText(preview)
+		toast.success("Copied prompt to clipboard")
+	}
+
+	return (
+		<Dialog open={props.open} onOpenChange={props.onOpenChange}>
+			<DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col">
+				<DialogHeader>
+					<DialogTitle>Prompt Preview</DialogTitle>
+					<DialogDescription>
+						This is the full prompt that will be sent to Cursor when an agent is launched.
+					</DialogDescription>
+				</DialogHeader>
+				<div className="flex-1 overflow-y-auto rounded-md border bg-muted/30 p-4">
+					<pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/90">
+						{preview}
+					</pre>
+				</div>
+				<DialogFooter>
+					<Button variant="outline" size="sm" onClick={handleCopy}>
+						<CopyIcon className="mr-1.5 size-3.5" />
+						Copy
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	)
 }
 
