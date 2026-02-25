@@ -28,6 +28,7 @@
 		"@base-ui/react": "^1.2.0",
 		"@chat-adapter/slack": "^4.14.0",
 		"@chat-adapter/state-memory": "^4.14.0",
+		"@clerk/nextjs": "^6.38.2",
 		"@inngest/agent-kit": "^0.13.2",
 		"@inngest/realtime": "^0.4.6",
 		"@superbuilders/errors": "^3.0.2",
