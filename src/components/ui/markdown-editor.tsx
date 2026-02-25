@@ -57,9 +57,43 @@ function computeWrappedText(
 	return { value, selectionStart: newStart, selectionEnd: newEnd }
 }
 
+function useUndoHistory(value: string, onChange: (v: string) => void) {
+	const historyRef = React.useRef<string[]>([value])
+	const indexRef = React.useRef(0)
+	const isUndoRedoRef = React.useRef(false)
+
+	if (
+		!isUndoRedoRef.current &&
+		historyRef.current[indexRef.current] !== value
+	) {
+		const history = historyRef.current.slice(0, indexRef.current + 1)
+		history.push(value)
+		historyRef.current = history
+		indexRef.current = history.length - 1
+	}
+	isUndoRedoRef.current = false
+
+	function undo() {
+		if (indexRef.current <= 0) return
+		indexRef.current -= 1
+		isUndoRedoRef.current = true
+		onChange(historyRef.current[indexRef.current]!)
+	}
+
+	function redo() {
+		if (indexRef.current >= historyRef.current.length - 1) return
+		indexRef.current += 1
+		isUndoRedoRef.current = true
+		onChange(historyRef.current[indexRef.current]!)
+	}
+
+	return { undo, redo }
+}
+
 function MarkdownEditor(props: MarkdownEditorProps) {
 	const [mode, setMode] = React.useState<"edit" | "preview">("edit")
 	const textareaRef = React.useRef<HTMLTextAreaElement>(null)
+	const { undo, redo } = useUndoHistory(props.value, props.onChange)
 
 	function handleFormat(before: string, after: string, placeholder: string) {
 		const textarea = textareaRef.current
@@ -85,7 +119,13 @@ function MarkdownEditor(props: MarkdownEditorProps) {
 	function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
 		if (!e.metaKey && !e.ctrlKey) return
 
-		if (e.key === "b") {
+		if (e.key === "z" && e.shiftKey) {
+			e.preventDefault()
+			redo()
+		} else if (e.key === "z") {
+			e.preventDefault()
+			undo()
+		} else if (e.key === "b") {
 			e.preventDefault()
 			handleFormat("**", "**", "bold")
 		} else if (e.key === "i") {
