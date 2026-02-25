@@ -1,5 +1,4 @@
 import { createSlackAdapter } from "@chat-adapter/slack"
-import { createMemoryState } from "@chat-adapter/state-memory"
 import * as errors from "@superbuilders/errors"
 import * as logger from "@superbuilders/slog"
 import { Actions, Button, Card, CardText, Chat, type Thread, ThreadImpl } from "chat"
@@ -9,6 +8,7 @@ import { cursorAgentThreads } from "@/db/schemas/cursor"
 import { env } from "@/env"
 import { inngest } from "@/inngest"
 import { createCursorClient } from "@/lib/clients/cursor/client"
+import { createPostgresState } from "@/lib/state-postgres"
 
 const CHANNEL_REPOS: Record<string, { repository: string; ref: string }> = {
 	C0AHSQHA5A4: { repository: "incept-team/incept", ref: "main" }
@@ -19,7 +19,7 @@ const bot = new Chat({
 	adapters: {
 		slack: createSlackAdapter()
 	},
-	state: createMemoryState()
+	state: createPostgresState()
 }).registerSingleton()
 
 bot.onNewMention(async (thread, message) => {
