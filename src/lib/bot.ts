@@ -67,6 +67,19 @@ async function postError(thread: Thread<unknown>, err: Error): Promise<void> {
 	}
 }
 
+async function reactToMessage(
+	thread: Thread<unknown>,
+	messageId: string,
+	emoji: string,
+	action: "add" | "remove"
+): Promise<void> {
+	const fn = action === "add" ? thread.adapter.addReaction : thread.adapter.removeReaction
+	const result = await errors.try(fn.call(thread.adapter, thread.id, messageId, emoji))
+	if (result.error) {
+		logger.warn("failed to update reaction", { action, emoji, error: result.error })
+	}
+}
+
 type IncomingMessage = {
 	id: string
 	text: string
@@ -120,6 +133,8 @@ async function handleSubscribedMessage(thread: Thread, message: IncomingMessage)
 
 	logger.debug("subscribed message received", { threadId: thread.id, text: followupText })
 
+	await reactToMessage(thread, message.id, "see_no_evil", "add")
+
 	const rows = await db
 		.select({
 			agentId: cursorAgentThreads.agentId,
@@ -132,11 +147,13 @@ async function handleSubscribedMessage(thread: Thread, message: IncomingMessage)
 	const row = rows[0]
 	if (!row) {
 		logger.warn("no agent found for subscribed thread", { threadId: thread.id })
+		await reactToMessage(thread, message.id, "see_no_evil", "remove")
 		return
 	}
 
 	const apiKey = env.CURSOR_API_KEY
 	if (!apiKey) {
+		await reactToMessage(thread, message.id, "see_no_evil", "remove")
 		logger.error("missing CURSOR_API_KEY for followup")
 		throw errors.new("CURSOR_API_KEY not configured")
 	}
@@ -165,6 +182,7 @@ async function handleSubscribedMessage(thread: Thread, message: IncomingMessage)
 		})
 
 		await thread.postEphemeral(message.author, card, { fallbackToDM: false })
+		await reactToMessage(thread, message.id, "see_no_evil", "remove")
 		return
 	}
 
@@ -174,6 +192,8 @@ async function handleSubscribedMessage(thread: Thread, message: IncomingMessage)
 		name: "cursor/followup.sent",
 		data: { agentId: row.agentId, threadId: thread.id, agentUrl: row.agentUrl }
 	})
+
+	await reactToMessage(thread, message.id, "see_no_evil", "remove")
 
 	await thread.post(
 		"*Follow-up sent*\n\nYour follow-up has been sent to the agent. Waiting for a response..."
