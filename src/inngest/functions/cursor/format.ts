@@ -49,36 +49,5 @@ function buildResultMessage(
 	return lines.join("\n")
 }
 
-function buildPhaseResultMessage(
-	phase: string,
-	nextPhaseLabel: string | undefined,
-	agentUrl: string,
-	lastAssistantMessage: string
-): string {
-	const label = phase.charAt(0).toUpperCase() + phase.slice(1)
-	const lines: string[] = []
-
-	lines.push(`*${label} complete*`)
-
-	if (lastAssistantMessage) {
-		lines.push("")
-		const quoted = lastAssistantMessage
-			.split("\n")
-			.map((line) => `> ${line}`)
-			.join("\n")
-		lines.push(quoted)
-	}
-
-	lines.push("")
-	lines.push(`<${agentUrl}|View in Cursor>`)
-
-	if (nextPhaseLabel) {
-		lines.push("")
-		lines.push("Reply with feedback, or continue to the next phase.")
-	}
-
-	return lines.join("\n")
-}
-
-export { buildPhaseResultMessage, buildResultMessage }
+export { buildResultMessage }
 export type { CompletionData }

@@ -1,4 +1,4 @@
-import { boolean, pgSchema, text, timestamp } from "drizzle-orm/pg-core"
+import { pgSchema, text, timestamp } from "drizzle-orm/pg-core"
 
 const agentSchema = pgSchema("agent")
 
@@ -11,8 +11,6 @@ const cursorAgentThreads = agentSchema.table("cursor_agent_threads", {
 	branchName: text("branch_name"),
 	agentUrl: text("agent_url").notNull(),
 	pendingFollowup: text("pending_followup"),
-	currentPhase: text("current_phase"),
-	workflowActive: boolean("workflow_active").notNull().default(false),
 	createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull()
 })
 

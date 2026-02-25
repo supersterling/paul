@@ -1,5 +1,5 @@
 import * as errors from "@superbuilders/errors"
-import { Actions, Button, Card, type Thread } from "chat"
+import type { Thread } from "chat"
 import { and, eq } from "drizzle-orm"
 import type { Logger } from "inngest"
 import { NonRetriableError } from "inngest"
@@ -7,10 +7,9 @@ import { db } from "@/db"
 import { cursorAgentThreads } from "@/db/schemas/cursor"
 import { env } from "@/env"
 import { inngest } from "@/inngest"
-import { buildPhaseResultMessage, buildResultMessage } from "@/inngest/functions/cursor/format"
+import { buildResultMessage } from "@/inngest/functions/cursor/format"
 import { thread } from "@/lib/bot"
 import { createCursorClient } from "@/lib/clients/cursor/client"
-import { nextPhase, phaseLabel } from "@/lib/prompt-compose"
 
 async function postToThread(
 	t: Thread,
@@ -22,46 +21,6 @@ async function postToThread(
 	if (result.error) {
 		logger.error("failed to post to slack", { error: result.error, context })
 		throw errors.wrap(result.error, context)
-	}
-}
-
-async function postWorkflowPhaseResult(
-	t: Thread,
-	logger: Logger,
-	currentPhase: string | undefined,
-	agentUrl: string,
-	lastMessage: string,
-	threadId: string
-): Promise<void> {
-	const phase = currentPhase ? currentPhase : "unknown"
-	const nextPhaseStr = nextPhase(phase)
-	const nextLabel = nextPhaseStr ? phaseLabel(nextPhaseStr) : undefined
-
-	const text = buildPhaseResultMessage(phase, nextLabel, agentUrl, lastMessage)
-	await postToThread(t, text, logger, "post phase result to slack")
-
-	if (nextLabel) {
-		const card = Card({
-			children: [
-				Actions([
-					Button({
-						id: "cursor-phase-continue",
-						label: `Continue to ${nextLabel}`,
-						style: "primary"
-					})
-				])
-			]
-		})
-		const cardPostResult = await errors.try(t.post(card))
-		if (cardPostResult.error) {
-			logger.error("failed to post phase card", { error: cardPostResult.error })
-		}
-	} else {
-		await db
-			.update(cursorAgentThreads)
-			.set({ workflowActive: false })
-			.where(eq(cursorAgentThreads.threadId, threadId))
-		logger.info("workflow completed, final phase reached", { threadId, phase })
 	}
 }
 
@@ -152,8 +111,6 @@ const agentLifecycle = inngest.createFunction(
 				ref,
 				branchName: agent.branchName,
 				agentUrl: agent.url,
-				currentPhase: event.data.currentPhase,
-				workflowActive: event.data.workflowActive,
 				createdAt: new Date()
 			})
 
@@ -234,18 +191,6 @@ const agentLifecycle = inngest.createFunction(
 				prUrl: completionEvent.data.prUrl,
 				branchName: completionEvent.data.branchName
 			})
-
-			if (event.data.workflowActive && completionEvent.data.status === "FINISHED") {
-				await postWorkflowPhaseResult(
-					t,
-					logger,
-					event.data.currentPhase,
-					agent.url,
-					lastMessage,
-					threadId
-				)
-				return
-			}
 
 			const resultMsg = buildResultMessage(completionEvent.data, agent.url, lastMessage)
 			await postToThread(t, resultMsg, logger, "post result to slack")

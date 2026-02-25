@@ -11,44 +11,54 @@ type PromptSection = {
 
 const PHASE_ORDER = ["research", "propose", "build", "review", "pr"]
 
-async function composePhasePrompt(
-	phase: string,
-	repository: string,
-	featureRequest?: string
-): Promise<string> {
-	logger.debug("composing phase prompt", { phase, repository })
+const RESPONSE_STYLE_SECTION: PromptSection = {
+	header: "Response Style",
+	content:
+		"Keep responses under 10 lines. Be terse. The user will ask you to expand if needed. Do not produce wall-of-text responses.",
+	position: -1
+}
 
-	const baseSections = await db
-		.select({
-			header: promptPhases.header,
-			content: promptPhases.content,
-			position: promptPhases.position
-		})
-		.from(promptPhases)
-		.where(eq(promptPhases.phase, phase))
-		.orderBy(asc(promptPhases.position))
+async function composeWorkflowPrompt(repository: string, featureRequest: string): Promise<string> {
+	logger.debug("composing workflow prompt", { repository, phaseCount: PHASE_ORDER.length })
 
-	const overrideSections = await db
-		.select({
-			header: promptPhaseOverrides.header,
-			content: promptPhaseOverrides.content,
-			position: promptPhaseOverrides.position
-		})
-		.from(promptPhaseOverrides)
-		.where(
-			and(eq(promptPhaseOverrides.phase, phase), eq(promptPhaseOverrides.repository, repository))
-		)
-		.orderBy(asc(promptPhaseOverrides.position))
+	const allSections: PromptSection[] = [RESPONSE_STYLE_SECTION]
 
-	const merged = mergeSections(baseSections, overrideSections)
+	for (const phase of PHASE_ORDER) {
+		const baseSections = await db
+			.select({
+				header: promptPhases.header,
+				content: promptPhases.content,
+				position: promptPhases.position
+			})
+			.from(promptPhases)
+			.where(eq(promptPhases.phase, phase))
+			.orderBy(asc(promptPhases.position))
 
-	if (featureRequest) {
-		merged.push({ header: "Feature Request", content: featureRequest, position: 9999 })
+		const overrideSections = await db
+			.select({
+				header: promptPhaseOverrides.header,
+				content: promptPhaseOverrides.content,
+				position: promptPhaseOverrides.position
+			})
+			.from(promptPhaseOverrides)
+			.where(
+				and(eq(promptPhaseOverrides.phase, phase), eq(promptPhaseOverrides.repository, repository))
+			)
+			.orderBy(asc(promptPhaseOverrides.position))
+
+		const merged = mergeSections(baseSections, overrideSections)
+		for (const section of merged) {
+			allSections.push(section)
+		}
 	}
 
-	const blocks = merged.map((s) => `## ${s.header}\n\n${s.content}`)
+	allSections.push({ header: "Feature Request", content: featureRequest, position: 9999 })
 
-	logger.debug("prompt composed", { phase, sectionCount: blocks.length })
+	allSections.sort((a, b) => a.position - b.position)
+
+	const blocks = allSections.map((s) => `## ${s.header}\n\n${s.content}`)
+
+	logger.debug("workflow prompt composed", { sectionCount: blocks.length })
 
 	return blocks.join("\n\n")
 }
@@ -83,28 +93,4 @@ function mergeSections(base: PromptSection[], overrides: PromptSection[]): Promp
 	return merged
 }
 
-function nextPhase(current: string): string | undefined {
-	const idx = PHASE_ORDER.indexOf(current)
-	if (idx === -1) {
-		return undefined
-	}
-	const next = PHASE_ORDER[idx + 1]
-	return next
-}
-
-function phaseLabel(phase: string): string {
-	const labels: Record<string, string> = {
-		research: "Research",
-		propose: "Propose",
-		build: "Build",
-		review: "Review",
-		pr: "PR"
-	}
-	const label = labels[phase]
-	if (!label) {
-		return phase
-	}
-	return label
-}
-
-export { composePhasePrompt, nextPhase, PHASE_ORDER, phaseLabel }
+export { PHASE_ORDER, composeWorkflowPrompt }
