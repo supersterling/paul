@@ -18,7 +18,7 @@ const bot = new Chat({
 }).registerSingleton()
 
 bot.onNewMention(async (thread, message) => {
-	const prompt = message.text.trim()
+	const prompt = message.text.replace(/<@U0AGS2FM1NX>/g, "@Cursor").trim()
 	if (!prompt) {
 		await thread.post("Give me a task and I'll launch a Cursor agent for it.")
 		return

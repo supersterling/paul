@@ -5,7 +5,7 @@ import { NonRetriableError } from "inngest"
 import { env } from "@/env"
 import { inngest } from "@/inngest"
 import { thread } from "@/lib/bot"
-import { createCursorClient } from "@/lib/clients/cursor"
+import { createCursorClient } from "@/lib/clients/cursor/client"
 
 type AgentInfo = {
 	agentId: string
@@ -37,26 +37,36 @@ async function postToThread(
 
 function buildResultMessage(
 	data: CompletionData,
-	agent: AgentInfo
-): { message: string; level: "error" | "info" } {
-	const { status, summary, prUrl, branchName, agentUrl } = data
+	agent: AgentInfo,
+	lastAssistantMessage: string
+): string {
+	const { status, prUrl, branchName, agentUrl } = data
 	const viewUrl = agentUrl ? agentUrl : agent.url
+	const isError = status === "ERROR"
+	const heading = isError ? "*Agent errored*" : "*Agent finished*"
 
-	if (status === "ERROR") {
-		const summaryLine = summary ? `\n${summary}` : ""
-		return {
-			message: `*Agent errored*${summaryLine}\n<${viewUrl}|View in Cursor>`,
-			level: "error"
-		}
+	const lines = [heading]
+
+	if (branchName) {
+		lines.push(`Branch: \`${branchName}\``)
+	}
+	if (prUrl) {
+		lines.push(`<${prUrl}|View PR>`)
+	}
+	if (isError) {
+		lines.push(`<${viewUrl}|View in Cursor>`)
 	}
 
-	const summaryLine = summary ? `\n${summary}` : ""
-	const prLine = prUrl ? `\n<${prUrl}|View PR>` : ""
-	const branchLine = branchName ? `\nBranch: \`${branchName}\`` : ""
-	return {
-		message: `*Agent finished*${summaryLine}${prLine}${branchLine}`,
-		level: "info"
+	if (lastAssistantMessage) {
+		lines.push("")
+		const quoted = lastAssistantMessage
+			.split("\n")
+			.map((line) => `> ${line}`)
+			.join("\n")
+		lines.push(quoted)
 	}
+
+	return lines.join("\n")
 }
 
 const agentLifecycle = inngest.createFunction(
@@ -130,6 +140,32 @@ const agentLifecycle = inngest.createFunction(
 			timeout: "30d"
 		})
 
+		const lastMessage = await step.run("fetch-conversation", async () => {
+			if (!completionEvent) {
+				return ""
+			}
+
+			const client = createCursorClient(apiKey)
+			const { data, error } = await client.GET("/v0/agents/{id}/conversation", {
+				params: { path: { id: agent.agentId } }
+			})
+
+			if (error) {
+				logger.warn("failed to fetch conversation", { agentId: agent.agentId })
+				return ""
+			}
+
+			const messages = data.messages
+			for (let i = messages.length - 1; i >= 0; i--) {
+				const msg = messages[i]
+				if (msg && msg.type === "assistant_message") {
+					return msg.text
+				}
+			}
+
+			return ""
+		})
+
 		await step.run("post-result", async () => {
 			const t = thread(threadId)
 
@@ -144,23 +180,19 @@ const agentLifecycle = inngest.createFunction(
 				return
 			}
 
-			const result = buildResultMessage(completionEvent.data, agent)
-
-			if (result.level === "error") {
-				logger.error("agent errored", {
-					agentId: agent.agentId,
-					summary: completionEvent.data.summary
-				})
+			const isError = completionEvent.data.status === "ERROR"
+			if (isError) {
+				logger.error("agent errored", { agentId: agent.agentId })
 			} else {
 				logger.info("agent finished", {
 					agentId: agent.agentId,
-					summary: completionEvent.data.summary,
 					prUrl: completionEvent.data.prUrl,
 					branchName: completionEvent.data.branchName
 				})
 			}
 
-			await postToThread(t, result.message, logger, "post result to slack")
+			const message = buildResultMessage(completionEvent.data, agent, lastMessage)
+			await postToThread(t, message, logger, "post result to slack")
 		})
 
 		return { agentId: agent.agentId, status: completionEvent?.data.status }
