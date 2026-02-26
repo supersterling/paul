@@ -19,6 +19,17 @@ const promptPhaseOverrides = agentSchema.table("prompt_phase_overrides", {
 	position: integer("position").notNull()
 })
 
+const promptRepoPhases = agentSchema.table(
+	"prompt_repo_phases",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		repository: text("repository").notNull(),
+		phase: text("phase").notNull(),
+		position: integer("position").notNull()
+	},
+	(t) => [unique("prompt_repo_phases_repo_phase").on(t.repository, t.phase)]
+)
+
 const promptUserOverrides = agentSchema.table(
 	"prompt_user_overrides",
 	{
@@ -43,4 +54,10 @@ const promptUserPhases = agentSchema.table(
 	(t) => [unique("prompt_user_phases_user_phase").on(t.slackUserId, t.phase)]
 )
 
-export { promptPhaseOverrides, promptPhases, promptUserOverrides, promptUserPhases }
+export {
+	promptPhaseOverrides,
+	promptPhases,
+	promptRepoPhases,
+	promptUserOverrides,
+	promptUserPhases
+}

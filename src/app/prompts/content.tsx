@@ -13,18 +13,32 @@ import {
 	RotateCcwIcon,
 	Trash2Icon
 } from "lucide-react"
+import { useRouter } from "next/navigation"
 import * as React from "react"
 import { toast } from "sonner"
 import {
+	createRepoOverride,
+	createRepoPhase,
 	createUserOverride,
 	createUserPhase,
+	deleteRepoOverride,
+	deleteRepoPhase,
 	deleteUserOverride,
 	deleteUserPhase,
 	reorderPhaseSections,
+	reorderRepoPhases,
+	reorderRepoSections,
 	reorderUserPhases,
+	updateRepoOverride,
 	updateUserOverride
 } from "@/app/prompts/actions"
-import type { BaseSection, UserOverride, UserPhase } from "@/app/prompts/page"
+import type {
+	BaseSection,
+	RepoContext,
+	UserContext,
+	UserOverride,
+	UserPhase
+} from "@/app/prompts/page"
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -36,6 +50,15 @@ import {
 	AlertDialogTitle
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import {
+	Combobox,
+	ComboboxContent,
+	ComboboxEmpty,
+	ComboboxInput,
+	ComboboxItem,
+	ComboboxList
+} from "@/components/ui/combobox"
 import {
 	Dialog,
 	DialogContent,
@@ -44,7 +67,6 @@ import {
 	DialogHeader,
 	DialogTitle
 } from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { MarkdownEditor } from "@/components/ui/markdown-editor"
@@ -58,12 +80,6 @@ import {
 } from "@/components/ui/sortable"
 import { PHASE_ORDER } from "@/lib/prompt-constants"
 import { cn } from "@/lib/utils"
-
-type UserContext = {
-	slackUserId: string | undefined
-	overrides: UserOverride[]
-	phases: UserPhase[]
-}
 
 type EffectiveSection = {
 	phase: string
@@ -94,11 +110,11 @@ type PhaseReorderItem = {
 }
 
 const PHASE_COLOR_CYCLE = [
-	{ text: "text-chart-1", bg: "bg-chart-1/10", border: "border-chart-1/20" },
-	{ text: "text-chart-2", bg: "bg-chart-2/10", border: "border-chart-2/20" },
-	{ text: "text-chart-3", bg: "bg-chart-3/10", border: "border-chart-3/20" },
-	{ text: "text-chart-4", bg: "bg-chart-4/10", border: "border-chart-4/20" },
-	{ text: "text-chart-5", bg: "bg-chart-5/10", border: "border-chart-5/20" }
+	{ text: "text-chart-1", bg: "bg-chart-1/30", border: "border-chart-1/20" },
+	{ text: "text-chart-2", bg: "bg-chart-2/30", border: "border-chart-2/20" },
+	{ text: "text-chart-3", bg: "bg-chart-3/30", border: "border-chart-3/20" },
+	{ text: "text-chart-4", bg: "bg-chart-4/30", border: "border-chart-4/20" },
+	{ text: "text-chart-5", bg: "bg-chart-5/30", border: "border-chart-5/20" }
 ]
 
 function getPhaseColor(idx: number): { text: string; bg: string; border: string } {
@@ -169,9 +185,9 @@ function mergePhase(
 	return sections
 }
 
-function computeEffectivePhases(userPhases: UserPhase[]): string[] {
-	if (userPhases.length === 0) return PHASE_ORDER
-	return userPhases.map((p) => p.phase)
+function computeEffectivePhases(phases: UserPhase[]): string[] {
+	if (phases.length === 0) return PHASE_ORDER
+	return phases.map((p) => p.phase)
 }
 
 function computeEffectiveSections(
@@ -228,7 +244,7 @@ function composePreview(
 	return blocks.join("\n\n")
 }
 
-async function performDelete(section: EffectiveSection, slackUserId: string): Promise<boolean> {
+async function performUserDelete(section: EffectiveSection, slackUserId: string): Promise<boolean> {
 	if (section.source === "default") {
 		const result = await errors.try(
 			createUserOverride({
@@ -250,12 +266,120 @@ async function performDelete(section: EffectiveSection, slackUserId: string): Pr
 	return true
 }
 
+async function performRepoDelete(section: EffectiveSection, repository: string): Promise<boolean> {
+	if (section.source === "default") {
+		const result = await errors.try(
+			createRepoOverride({
+				repository,
+				phase: section.phase,
+				header: section.header,
+				content: "",
+				position: section.position
+			})
+		)
+		if (result.error) return false
+		return true
+	}
+
+	if (!section.overrideId) return false
+
+	const result = await errors.try(deleteRepoOverride({ id: section.overrideId }))
+	if (result.error) return false
+	return true
+}
+
 function Content(props: {
 	baseSectionsPromise: Promise<BaseSection[]>
 	userContextPromise: Promise<UserContext>
+	repoContextPromise: Promise<RepoContext>
+	searchParamsPromise: Promise<{ tab?: string; repo?: string }>
 }) {
 	const baseSections = React.use(props.baseSectionsPromise)
 	const userContext = React.use(props.userContextPromise)
+	const repoContext = React.use(props.repoContextPromise)
+	const searchParams = React.use(props.searchParamsPromise)
+	const router = useRouter()
+
+	const activeTab = searchParams.tab === "repo" ? "repo" : "me"
+	const [previewOpen, setPreviewOpen] = React.useState(false)
+
+	function handleTabChange(tab: string) {
+		if (tab === "repo") {
+			const repoParam = searchParams.repo
+			if (repoParam) {
+				router.push(`?tab=repo&repo=${encodeURIComponent(repoParam)}`)
+			} else {
+				router.push("?tab=repo")
+			}
+		} else {
+			router.push("/prompts")
+		}
+	}
+
+	return (
+		<div data-slot="prompt-editor" className="flex h-full flex-col">
+			<div className="flex items-center gap-2 border-b px-3">
+				<nav className="flex gap-3">
+					<button
+						type="button"
+						onClick={() => handleTabChange("me")}
+						className={cn(
+							"border-b-2 py-1.5 font-medium text-sm transition-colors",
+							activeTab === "me"
+								? "border-foreground text-foreground"
+								: "border-transparent text-muted-foreground hover:text-foreground"
+						)}
+					>
+						Me
+					</button>
+					<button
+						type="button"
+						onClick={() => handleTabChange("repo")}
+						className={cn(
+							"border-b-2 py-1.5 font-medium text-sm transition-colors",
+							activeTab === "repo"
+								? "border-foreground text-foreground"
+								: "border-transparent text-muted-foreground hover:text-foreground"
+						)}
+					>
+						Repo
+					</button>
+				</nav>
+				<div className="flex-1" />
+				<button
+					type="button"
+					onClick={() => setPreviewOpen(true)}
+					className="flex items-center gap-1.5 rounded px-2 py-1 text-muted-foreground text-xs hover:bg-accent hover:text-foreground"
+				>
+					<EyeIcon className="size-3.5" />
+					Preview
+				</button>
+			</div>
+			<div className="flex flex-1 overflow-hidden">
+				{activeTab === "me" ? (
+					<MeTab baseSections={baseSections} userContext={userContext} />
+				) : (
+					<RepoTab
+						baseSections={baseSections}
+						repoContext={repoContext}
+						selectedRepo={searchParams.repo}
+					/>
+				)}
+			</div>
+
+			<PromptPreviewDialog
+				open={previewOpen}
+				onOpenChange={setPreviewOpen}
+				baseSections={baseSections}
+				userContext={userContext}
+				repoContext={repoContext}
+			/>
+		</div>
+	)
+}
+
+function MeTab(props: { baseSections: BaseSection[]; userContext: UserContext }) {
+	const { baseSections, userContext } = props
 
 	const [selected, setSelected] = React.useState<SelectedItem>(null)
 	const [editBuffers, setEditBuffers] = React.useState<Record<string, string>>({})
@@ -272,11 +396,8 @@ function Content(props: {
 	const [creatingPhase, setCreatingPhase] = React.useState(false)
 
 	const [deleteTarget, setDeleteTarget] = React.useState<
-		| { kind: "section"; section: EffectiveSection }
-		| { kind: "phase"; phase: string }
-		| null
+		{ kind: "section"; section: EffectiveSection } | { kind: "phase"; phase: string } | null
 	>(null)
-	const [previewOpen, setPreviewOpen] = React.useState(false)
 
 	const effectivePhases = computeEffectivePhases(userContext.phases)
 
@@ -375,7 +496,7 @@ function Content(props: {
 		const bk = bufferKey(section)
 		setSavingIds((prev) => new Set(prev).add(bk))
 
-		const deleteResult = await performDelete(section, userContext.slackUserId)
+		const deleteResult = await performUserDelete(section, userContext.slackUserId)
 		setSavingIds((prev) => {
 			const next = new Set(prev)
 			next.delete(bk)
@@ -538,7 +659,7 @@ function Content(props: {
 	})
 
 	return (
-		<div data-slot="prompt-editor" className="flex h-full">
+		<>
 			<div className="flex w-72 shrink-0 flex-col border-r">
 				<div className="flex-1 overflow-y-auto p-3">
 					{hasMaterializedPhases ? (
@@ -562,7 +683,7 @@ function Content(props: {
 													phase={phase}
 													isExpanded={isExpanded}
 													colors={colors}
-													hasSlack={hasSlack}
+													canEdit={hasSlack}
 													dragHandle={
 														<SortableItemHandle className="shrink-0 text-muted-foreground">
 															<GripVerticalIcon className="size-3" />
@@ -632,7 +753,7 @@ function Content(props: {
 										phase={phase}
 										isExpanded={isExpanded}
 										colors={colors}
-										hasSlack={hasSlack}
+										canEdit={hasSlack}
 										onToggle={() => {
 											setExpandedPhases((prev) => {
 												const next = new Set(prev)
@@ -693,15 +814,6 @@ function Content(props: {
 						</button>
 					)}
 
-					<button
-						type="button"
-						onClick={() => setPreviewOpen(true)}
-						className="mt-1 flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-muted-foreground text-xs hover:bg-accent hover:text-foreground"
-					>
-						<EyeIcon className="size-3.5" />
-						Preview full prompt
-					</button>
-
 					{!hasSlack && (
 						<p className="mt-4 px-2 text-muted-foreground text-xs">
 							Link Slack to create and edit sections.
@@ -731,7 +843,7 @@ function Content(props: {
 						editBuffers={editBuffers}
 						savingIds={savingIds}
 						successIds={successIds}
-						hasSlack={hasSlack}
+						canEdit={hasSlack}
 						onBufferChange={(key, v) => setEditBuffers((prev) => ({ ...prev, [key]: v }))}
 						bufferKey={currentSection ? bufferKey(currentSection) : undefined}
 						onSave={handleSave}
@@ -749,12 +861,521 @@ function Content(props: {
 				)}
 			</div>
 
-			<PromptPreviewDialog
-				open={previewOpen}
-				onOpenChange={setPreviewOpen}
-				effectivePhases={effectivePhases}
-				effectiveByPhase={effectiveByPhase}
+			<DeleteConfirmDialog
+				target={deleteTarget}
+				onCancel={() => setDeleteTarget(null)}
+				onConfirm={async () => {
+					if (!deleteTarget) return
+					if (deleteTarget.kind === "section") {
+						await handleDeleteSection(deleteTarget.section)
+					} else {
+						await handleDeletePhase(deleteTarget.phase)
+					}
+					setDeleteTarget(null)
+				}}
 			/>
+		</>
+	)
+}
+
+function RepoTab(props: {
+	baseSections: BaseSection[]
+	repoContext: RepoContext
+	selectedRepo: string | undefined
+}) {
+	if (!props.selectedRepo) {
+		return (
+			<>
+				<div className="flex w-72 shrink-0 flex-col border-r p-3">
+					<RepoSelector
+						availableRepos={props.repoContext.availableRepos}
+						selectedRepo={undefined}
+					/>
+					<p className="mt-4 text-muted-foreground text-xs">
+						Select a repository to manage its prompt overrides.
+					</p>
+				</div>
+				<EmptyState />
+			</>
+		)
+	}
+
+	return (
+		<RepoTabEditor
+			baseSections={props.baseSections}
+			repoContext={props.repoContext}
+			selectedRepo={props.selectedRepo}
+		/>
+	)
+}
+
+function RepoTabEditor(props: {
+	baseSections: BaseSection[]
+	repoContext: RepoContext
+	selectedRepo: string
+}) {
+	const { baseSections, repoContext, selectedRepo } = props
+
+	const [selected, setSelected] = React.useState<SelectedItem>(null)
+	const [editBuffers, setEditBuffers] = React.useState<Record<string, string>>({})
+	const [savingIds, setSavingIds] = React.useState<Set<string>>(new Set())
+	const [successIds, setSuccessIds] = React.useState<Set<string>>(new Set())
+	const [expandedPhases, setExpandedPhases] = React.useState<Set<string>>(() => new Set())
+
+	const [newHeader, setNewHeader] = React.useState("")
+	const [newContent, setNewContent] = React.useState("")
+	const [newPosition, setNewPosition] = React.useState("100")
+	const [creating, setCreating] = React.useState(false)
+
+	const [newPhaseName, setNewPhaseName] = React.useState("")
+	const [creatingPhase, setCreatingPhase] = React.useState(false)
+
+	const [deleteTarget, setDeleteTarget] = React.useState<
+		{ kind: "section"; section: EffectiveSection } | { kind: "phase"; phase: string } | null
+	>(null)
+
+	const effectivePhases = computeEffectivePhases(repoContext.phases)
+
+	const initialExpandRef = React.useRef(false)
+	if (!initialExpandRef.current) {
+		for (const phase of effectivePhases) {
+			expandedPhases.add(phase)
+		}
+		initialExpandRef.current = true
+	}
+
+	const effectiveByPhase = computeEffectiveSections(
+		effectivePhases,
+		baseSections,
+		repoContext.overrides
+	)
+
+	function findSelected(): EffectiveSection | undefined {
+		if (!selected) return undefined
+		if (selected.kind !== "section") return undefined
+		const sections = effectiveByPhase.get(selected.phase)
+		if (!sections) return undefined
+		return sections.find((s) => s.header === selected.header)
+	}
+
+	function bufferKey(section: EffectiveSection): string {
+		if (section.overrideId) return section.overrideId
+		if (section.baseId) return `base:${section.baseId}`
+		return `${section.phase}:${section.header}`
+	}
+
+	function flashSuccess(key: string) {
+		setSuccessIds((prev) => new Set(prev).add(key))
+		setTimeout(() => {
+			setSuccessIds((prev) => {
+				const next = new Set(prev)
+				next.delete(key)
+				return next
+			})
+		}, 2000)
+	}
+
+	async function handleSave(section: EffectiveSection) {
+		const bk = bufferKey(section)
+		const content = editBuffers[bk]
+		if (content === undefined) return
+		if (content === section.content) return
+
+		setSavingIds((prev) => new Set(prev).add(bk))
+
+		if (section.overrideId) {
+			const result = await errors.try(updateRepoOverride({ id: section.overrideId, content }))
+			setSavingIds((prev) => {
+				const next = new Set(prev)
+				next.delete(bk)
+				return next
+			})
+			if (result.error) {
+				toast.error("Failed to save section")
+				return
+			}
+		} else {
+			const result = await errors.try(
+				createRepoOverride({
+					repository: selectedRepo,
+					phase: section.phase,
+					header: section.header,
+					content,
+					position: section.position
+				})
+			)
+			setSavingIds((prev) => {
+				const next = new Set(prev)
+				next.delete(bk)
+				return next
+			})
+			if (result.error) {
+				toast.error("Failed to save section")
+				return
+			}
+		}
+
+		setEditBuffers((prev) => {
+			const next = { ...prev }
+			delete next[bk]
+			return next
+		})
+		flashSuccess(bk)
+		toast.success(`Saved "${section.header}"`)
+	}
+
+	async function handleDeleteSection(section: EffectiveSection) {
+		const bk = bufferKey(section)
+		setSavingIds((prev) => new Set(prev).add(bk))
+
+		const deleteResult = await performRepoDelete(section, selectedRepo)
+		setSavingIds((prev) => {
+			const next = new Set(prev)
+			next.delete(bk)
+			return next
+		})
+		if (!deleteResult) {
+			toast.error("Failed to delete section")
+			return
+		}
+
+		if (selected && selected.kind === "section" && selected.header === section.header) {
+			setSelected(null)
+		}
+		setEditBuffers((prev) => {
+			const next = { ...prev }
+			delete next[bk]
+			return next
+		})
+		toast.success(`Deleted "${section.header}"`)
+	}
+
+	async function handleResetToDefault(section: EffectiveSection) {
+		if (!section.overrideId) return
+		if (section.source !== "customized") return
+
+		const bk = bufferKey(section)
+		setSavingIds((prev) => new Set(prev).add(bk))
+
+		const result = await errors.try(deleteRepoOverride({ id: section.overrideId }))
+		setSavingIds((prev) => {
+			const next = new Set(prev)
+			next.delete(bk)
+			return next
+		})
+		if (result.error) {
+			toast.error("Failed to reset section")
+			return
+		}
+
+		setEditBuffers((prev) => {
+			const next = { ...prev }
+			delete next[bk]
+			return next
+		})
+		toast.success(`Reset "${section.header}" to default`)
+	}
+
+	async function handleCreateSection() {
+		if (!selected) return
+		if (selected.kind !== "new-section") return
+		if (!newHeader) return
+		if (!newContent) return
+
+		setCreating(true)
+		const result = await errors.try(
+			createRepoOverride({
+				repository: selectedRepo,
+				phase: selected.phase,
+				header: newHeader,
+				content: newContent,
+				position: Number.parseInt(newPosition, 10)
+			})
+		)
+		setCreating(false)
+		if (result.error) {
+			toast.error("Failed to create section")
+			return
+		}
+
+		toast.success(`Created "${newHeader}"`)
+		setSelected({ kind: "section", phase: selected.phase, header: newHeader })
+		setNewHeader("")
+		setNewContent("")
+		setNewPosition("100")
+	}
+
+	async function handleCreatePhase() {
+		if (!newPhaseName) return
+
+		setCreatingPhase(true)
+		const result = await errors.try(
+			createRepoPhase({
+				repository: selectedRepo,
+				phase: newPhaseName
+			})
+		)
+		setCreatingPhase(false)
+		if (result.error) {
+			toast.error("Failed to create phase")
+			return
+		}
+
+		toast.success(`Created phase "${newPhaseName}"`)
+		setExpandedPhases((prev) => new Set(prev).add(newPhaseName))
+		setNewPhaseName("")
+		setSelected(null)
+	}
+
+	async function handleDeletePhase(phase: string) {
+		const result = await errors.try(deleteRepoPhase({ repository: selectedRepo, phase }))
+		if (result.error) {
+			toast.error("Failed to delete phase")
+			return
+		}
+
+		toast.success(`Deleted phase "${phase}"`)
+		if (selected && selected.kind !== "new-phase" && selected.phase === phase) {
+			setSelected(null)
+		}
+	}
+
+	async function handleReorderPhases(newItems: PhaseReorderItem[]) {
+		const phases = newItems.map((item) => item.phase)
+		const result = await errors.try(reorderRepoPhases({ repository: selectedRepo, phases }))
+		if (result.error) return
+	}
+
+	const selectedPhase = selected && selected.kind !== "new-phase" ? selected.phase : undefined
+
+	function computeReorderItems(): ReorderItem[] {
+		if (!selectedPhase) return []
+		const sections = effectiveByPhase.get(selectedPhase)
+		if (!sections) return []
+
+		return sections.map((s) => {
+			const id = s.overrideId ? s.overrideId : s.baseId
+			if (!id) return { id: "", header: s.header, position: s.position, table: "base" as const }
+			const table = s.overrideId ? ("override" as const) : ("base" as const)
+			return { id, header: s.header, position: s.position, table }
+		})
+	}
+
+	async function handleReorderSections(newItems: ReorderItem[]) {
+		const payload = newItems.map((item) => ({ id: item.id, table: item.table }))
+		const result = await errors.try(reorderRepoSections({ items: payload }))
+		if (result.error) return
+	}
+
+	const currentSection = findSelected()
+	const hasMaterializedPhases = repoContext.phases.length > 0
+
+	const phaseReorderItems: PhaseReorderItem[] = effectivePhases.map((phase, idx) => {
+		if (!hasMaterializedPhases) {
+			return { id: `default-${idx}`, phase }
+		}
+		const repoPhase = repoContext.phases.find((p) => p.phase === phase)
+		if (!repoPhase) {
+			return { id: `default-${idx}`, phase }
+		}
+		return { id: repoPhase.id, phase }
+	})
+
+	return (
+		<>
+			<div className="flex w-72 shrink-0 flex-col border-r">
+				<div className="flex-1 overflow-y-auto p-3">
+					<RepoSelector availableRepos={repoContext.availableRepos} selectedRepo={selectedRepo} />
+
+					<div className="mt-3">
+						{hasMaterializedPhases ? (
+							<Sortable
+								value={phaseReorderItems}
+								onValueChange={handleReorderPhases}
+								getItemValue={(item) => item.id}
+								orientation="vertical"
+							>
+								<SortableContent className="space-y-1">
+									{phaseReorderItems.map((item, idx) => {
+										const phase = item.phase
+										const isExpanded = expandedPhases.has(phase)
+										const sections = effectiveByPhase.get(phase)
+										const colors = getPhaseColor(idx)
+
+										return (
+											<SortableItem key={item.id} value={item.id} className="rounded" asChild>
+												<div>
+													<PhaseFolder
+														phase={phase}
+														isExpanded={isExpanded}
+														colors={colors}
+														canEdit={true}
+														dragHandle={
+															<SortableItemHandle className="shrink-0 text-muted-foreground">
+																<GripVerticalIcon className="size-3" />
+															</SortableItemHandle>
+														}
+														onToggle={() => {
+															setExpandedPhases((prev) => {
+																const next = new Set(prev)
+																if (next.has(phase)) {
+																	next.delete(phase)
+																} else {
+																	next.add(phase)
+																}
+																return next
+															})
+														}}
+														onAddSection={() => {
+															setNewHeader("")
+															setNewContent("")
+															setNewPosition("100")
+															setSelected({ kind: "new-section", phase })
+														}}
+														onDeletePhase={() => setDeleteTarget({ kind: "phase", phase })}
+													>
+														{sections?.map((section) => {
+															const isSelected =
+																selected?.kind === "section" &&
+																selected.phase === phase &&
+																selected.header === section.header
+															return (
+																<SectionTreeItem
+																	key={`${section.phase}:${section.header}`}
+																	header={section.header}
+																	source={section.source}
+																	isSelected={isSelected}
+																	onClick={() =>
+																		setSelected({
+																			kind: "section",
+																			phase: section.phase,
+																			header: section.header
+																		})
+																	}
+																/>
+															)
+														})}
+													</PhaseFolder>
+												</div>
+											</SortableItem>
+										)
+									})}
+								</SortableContent>
+								<SortableOverlay />
+							</Sortable>
+						) : (
+							<div className="space-y-1">
+								{effectivePhases.map((phase, idx) => {
+									const isExpanded = expandedPhases.has(phase)
+									const sections = effectiveByPhase.get(phase)
+									const colors = getPhaseColor(idx)
+
+									return (
+										<PhaseFolder
+											key={phase}
+											phase={phase}
+											isExpanded={isExpanded}
+											colors={colors}
+											canEdit={true}
+											onToggle={() => {
+												setExpandedPhases((prev) => {
+													const next = new Set(prev)
+													if (next.has(phase)) {
+														next.delete(phase)
+													} else {
+														next.add(phase)
+													}
+													return next
+												})
+											}}
+											onAddSection={() => {
+												setNewHeader("")
+												setNewContent("")
+												setNewPosition("100")
+												setSelected({ kind: "new-section", phase })
+											}}
+											onDeletePhase={() => setDeleteTarget({ kind: "phase", phase })}
+										>
+											{sections?.map((section) => {
+												const isSelected =
+													selected?.kind === "section" &&
+													selected.phase === phase &&
+													selected.header === section.header
+												return (
+													<SectionTreeItem
+														key={`${section.phase}:${section.header}`}
+														header={section.header}
+														source={section.source}
+														isSelected={isSelected}
+														onClick={() =>
+															setSelected({
+																kind: "section",
+																phase: section.phase,
+																header: section.header
+															})
+														}
+													/>
+												)
+											})}
+										</PhaseFolder>
+									)
+								})}
+							</div>
+						)}
+					</div>
+
+					<button
+						type="button"
+						onClick={() => {
+							setNewPhaseName("")
+							setSelected({ kind: "new-phase" })
+						}}
+						className="mt-3 flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-muted-foreground text-xs hover:bg-accent hover:text-foreground"
+					>
+						<PlusIcon className="size-3.5" />
+						Add phase
+					</button>
+				</div>
+
+				<ReorderPanel
+					phase={selectedPhase}
+					sections={computeReorderItems()}
+					onReorder={handleReorderSections}
+				/>
+			</div>
+
+			<div className="flex flex-1 flex-col overflow-hidden">
+				{selected?.kind === "new-phase" ? (
+					<NewPhaseForm
+						name={newPhaseName}
+						creating={creatingPhase}
+						onNameChange={setNewPhaseName}
+						onCreate={handleCreatePhase}
+					/>
+				) : (
+					<EditorPanel
+						selected={selected}
+						section={currentSection}
+						editBuffers={editBuffers}
+						savingIds={savingIds}
+						successIds={successIds}
+						canEdit={true}
+						onBufferChange={(key, v) => setEditBuffers((prev) => ({ ...prev, [key]: v }))}
+						bufferKey={currentSection ? bufferKey(currentSection) : undefined}
+						onSave={handleSave}
+						onDelete={(section) => setDeleteTarget({ kind: "section", section })}
+						onResetToDefault={handleResetToDefault}
+						newHeader={newHeader}
+						newContent={newContent}
+						newPosition={newPosition}
+						creating={creating}
+						onNewHeaderChange={setNewHeader}
+						onNewContentChange={setNewContent}
+						onNewPositionChange={setNewPosition}
+						onCreateSection={handleCreateSection}
+					/>
+				)}
+			</div>
 
 			<DeleteConfirmDialog
 				target={deleteTarget}
@@ -769,35 +1390,128 @@ function Content(props: {
 					setDeleteTarget(null)
 				}}
 			/>
-		</div>
+		</>
+	)
+}
+
+function RepoSelector(props: { availableRepos: string[]; selectedRepo: string | undefined }) {
+	const router = useRouter()
+	const [inputValue, setInputValue] = React.useState("")
+
+	function handleSelect(value: string | null) {
+		if (!value) return
+		router.push(`?tab=repo&repo=${encodeURIComponent(value)}`)
+	}
+
+	function handleKeyDown(e: React.KeyboardEvent) {
+		if (e.key === "Enter" && inputValue.trim()) {
+			e.preventDefault()
+			handleSelect(inputValue.trim())
+		}
+	}
+
+	return (
+		<Combobox value={props.selectedRepo} onValueChange={handleSelect}>
+			<ComboboxInput
+				placeholder="Search or type repository..."
+				onChange={(e: React.ChangeEvent<HTMLInputElement>) => setInputValue(e.target.value)}
+				onKeyDown={handleKeyDown}
+			/>
+			<ComboboxContent>
+				<ComboboxList>
+					{props.availableRepos.map((repo) => (
+						<ComboboxItem key={repo} value={repo}>
+							{repo}
+						</ComboboxItem>
+					))}
+					<ComboboxEmpty>
+						{inputValue.trim()
+							? `Press Enter to use "${inputValue.trim()}"`
+							: "No repositories found"}
+					</ComboboxEmpty>
+				</ComboboxList>
+			</ComboboxContent>
+		</Combobox>
 	)
 }
 
 function PromptPreviewDialog(props: {
 	open: boolean
 	onOpenChange: (open: boolean) => void
-	effectivePhases: string[]
-	effectiveByPhase: Map<string, EffectiveSection[]>
+	baseSections: BaseSection[]
+	userContext: UserContext
+	repoContext: RepoContext
 }) {
-	const preview = composePreview(props.effectivePhases, props.effectiveByPhase)
+	const [previewTab, setPreviewTab] = React.useState<"me" | "repo">("me")
+
+	const userPhases = computeEffectivePhases(props.userContext.phases)
+	const userByPhase = computeEffectiveSections(
+		userPhases,
+		props.baseSections,
+		props.userContext.overrides
+	)
+	const userPreview = composePreview(userPhases, userByPhase)
+
+	const repoPhases = computeEffectivePhases(props.repoContext.phases)
+	const repoByPhase = computeEffectiveSections(
+		repoPhases,
+		props.baseSections,
+		props.repoContext.overrides
+	)
+	const repoPreview = composePreview(repoPhases, repoByPhase)
+
+	const activePreview = previewTab === "me" ? userPreview : repoPreview
 
 	function handleCopy() {
-		navigator.clipboard.writeText(preview)
+		navigator.clipboard.writeText(activePreview)
 		toast.success("Copied prompt to clipboard")
 	}
 
+	const hasRepoOverrides = props.repoContext.overrides.length > 0
+	const hasRepoPhases = props.repoContext.phases.length > 0
+	const hasRepoData = hasRepoOverrides ? true : hasRepoPhases
+	const repoLabel = props.repoContext.repository ? `Repo (${props.repoContext.repository})` : "Repo"
+
 	return (
 		<Dialog open={props.open} onOpenChange={props.onOpenChange}>
-			<DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col">
+			<DialogContent className="flex max-h-[80vh] flex-col sm:max-w-2xl">
 				<DialogHeader>
 					<DialogTitle>Prompt Preview</DialogTitle>
 					<DialogDescription>
-						This is the full prompt that will be sent to Cursor when an agent is launched.
+						Preview the composed prompt that will be sent to Cursor.
 					</DialogDescription>
 				</DialogHeader>
+				<nav className="flex gap-3">
+					<button
+						type="button"
+						onClick={() => setPreviewTab("me")}
+						className={cn(
+							"border-b-2 pb-1 font-medium text-sm transition-colors",
+							previewTab === "me"
+								? "border-foreground text-foreground"
+								: "border-transparent text-muted-foreground hover:text-foreground"
+						)}
+					>
+						My Prompt
+					</button>
+					<button
+						type="button"
+						onClick={() => setPreviewTab("repo")}
+						disabled={!hasRepoData}
+						className={cn(
+							"border-b-2 pb-1 font-medium text-sm transition-colors",
+							previewTab === "repo"
+								? "border-foreground text-foreground"
+								: "border-transparent text-muted-foreground hover:text-foreground",
+							!hasRepoData && "cursor-not-allowed opacity-50"
+						)}
+					>
+						{repoLabel}
+					</button>
+				</nav>
 				<div className="flex-1 overflow-y-auto rounded-md border bg-muted/30 p-4">
-					<pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/90">
-						{preview}
+					<pre className="whitespace-pre-wrap font-mono text-foreground/90 text-xs leading-relaxed">
+						{activePreview}
 					</pre>
 				</div>
 				<DialogFooter>
@@ -812,10 +1526,7 @@ function PromptPreviewDialog(props: {
 }
 
 function DeleteConfirmDialog(props: {
-	target:
-		| { kind: "section"; section: EffectiveSection }
-		| { kind: "phase"; phase: string }
-		| null
+	target: { kind: "section"; section: EffectiveSection } | { kind: "phase"; phase: string } | null
 	onCancel: () => void
 	onConfirm: () => void
 }) {
@@ -830,7 +1541,12 @@ function DeleteConfirmDialog(props: {
 				: ""
 
 	return (
-		<AlertDialog open={isOpen} onOpenChange={(open) => { if (!open) props.onCancel() }}>
+		<AlertDialog
+			open={isOpen}
+			onOpenChange={(open) => {
+				if (!open) props.onCancel()
+			}}
+		>
 			<AlertDialogContent size="sm">
 				<AlertDialogHeader>
 					<AlertDialogTitle>{title}</AlertDialogTitle>
@@ -851,7 +1567,7 @@ function PhaseFolder(props: {
 	phase: string
 	isExpanded: boolean
 	colors: { text: string; bg: string; border: string }
-	hasSlack: boolean
+	canEdit: boolean
 	dragHandle?: React.ReactNode
 	onToggle: () => void
 	onAddSection: () => void
@@ -883,7 +1599,7 @@ function PhaseFolder(props: {
 						{props.phase}
 					</Badge>
 				</button>
-				{props.hasSlack && (
+				{props.canEdit && (
 					<div className="flex items-center">
 						<button
 							type="button"
@@ -982,7 +1698,7 @@ function EditorPanel(props: {
 	editBuffers: Record<string, string>
 	savingIds: Set<string>
 	successIds: Set<string>
-	hasSlack: boolean
+	canEdit: boolean
 	onBufferChange: (key: string, value: string) => void
 	bufferKey: string | undefined
 	onSave: (section: EffectiveSection) => void
@@ -1040,7 +1756,7 @@ function EditorPanel(props: {
 				isDirty={isDirty}
 				isSaving={isSaving}
 				isSuccess={isSuccess}
-				hasSlack={props.hasSlack}
+				canEdit={props.canEdit}
 				onSave={() => props.onSave(section)}
 				onDelete={() => props.onDelete(section)}
 				onResetToDefault={
@@ -1055,7 +1771,7 @@ function EditorPanel(props: {
 					isDirty={isDirty}
 					isSaving={isSaving}
 					isSuccess={isSuccess}
-					readOnly={!props.hasSlack}
+					readOnly={!props.canEdit}
 				/>
 			</div>
 		</div>
@@ -1067,7 +1783,7 @@ function EditorHeader(props: {
 	isDirty: boolean
 	isSaving: boolean
 	isSuccess: boolean
-	hasSlack: boolean
+	canEdit: boolean
 	onSave: () => void
 	onDelete: () => void
 	onResetToDefault: (() => void) | undefined
@@ -1091,7 +1807,7 @@ function EditorHeader(props: {
 				<span className="font-medium text-[10px] text-chart-2 uppercase">{sourceLabel}</span>
 			)}
 			<h2 className="flex-1 font-semibold text-sm">{props.section.header}</h2>
-			{props.hasSlack && (
+			{props.canEdit && (
 				<div className="flex items-center gap-2">
 					{props.onResetToDefault && (
 						<Button
