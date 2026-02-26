@@ -42,7 +42,18 @@ const agentLifecycle = inngest.createFunction(
 	},
 	{ event: "cursor/agent.launch" },
 	async ({ event, logger, step }) => {
-		const { prompt, repository, ref, threadId, images } = event.data
+		const {
+			prompt,
+			repository,
+			ref,
+			threadId,
+			images,
+			model,
+			branchName,
+			autoCreatePr,
+			openAsCursorGithubApp,
+			skipReviewerRequest
+		} = event.data
 
 		const apiKey = env.CURSOR_API_KEY
 		if (!apiKey) {
@@ -66,16 +77,21 @@ const agentLifecycle = inngest.createFunction(
 			})
 
 			const promptBody = images.length > 0 ? { text: prompt, images } : { text: prompt }
+
+			const targetConfig = {
+				autoCreatePr: autoCreatePr !== undefined ? autoCreatePr : true,
+				openAsCursorGithubApp: openAsCursorGithubApp !== undefined ? openAsCursorGithubApp : false,
+				skipReviewerRequest: skipReviewerRequest !== undefined ? skipReviewerRequest : false,
+				autoBranch: true,
+				...(branchName ? { branchName } : {})
+			}
+
 			const { data, error } = await client.POST("/v0/agents", {
 				body: {
 					prompt: promptBody,
+					...(model ? { model } : {}),
 					source: { repository: `https://github.com/${repository}`, ref },
-					target: {
-						autoCreatePr: true,
-						openAsCursorGithubApp: false,
-						skipReviewerRequest: false,
-						autoBranch: true
-					},
+					target: targetConfig,
 					webhook: { url: webhookUrl }
 				}
 			})
@@ -240,8 +256,16 @@ const agentLifecycle = inngest.createFunction(
 
 			if (error) {
 				const detail = JSON.stringify(error)
-				logger.error("cursor followup api error for queued item", { error: detail, agentId: agent.agentId })
-				await postToThread(t, `*Error sending queued follow-up:* \`${detail}\``, logger, "post queue error")
+				logger.error("cursor followup api error for queued item", {
+					error: detail,
+					agentId: agent.agentId
+				})
+				await postToThread(
+					t,
+					`*Error sending queued follow-up:* \`${detail}\``,
+					logger,
+					"post queue error"
+				)
 				return
 			}
 
