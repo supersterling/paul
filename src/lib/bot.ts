@@ -100,7 +100,7 @@ bot.onAction("cursor-dequeue", async (event) => {
 	}
 })
 
-bot.onSlashCommand("/cursor", async (event) => {
+bot.onSlashCommand("/do", async (event) => {
 	const result = await errors.try(handleCursorCommand(event))
 	if (result.error) {
 		logger.error("slash command failed", { error: result.error })
@@ -563,7 +563,7 @@ async function handleCursorCommand(event: {
 	}
 	openModal: (modal: ModalElement) => Promise<{ viewId: string } | undefined>
 }): Promise<void> {
-	logger.info("cursor slash command", { userId: event.user.userId, text: event.text })
+	logger.info("do slash command", { userId: event.user.userId, text: event.text })
 
 	const models = await fetchModels()
 
@@ -581,7 +581,7 @@ async function handleCursorCommand(event: {
 
 	const modal = Modal({
 		callbackId: "cursor_launch_form",
-		title: "Launch Cursor Agent",
+		title: "Launch Agent",
 		submitLabel: "Launch",
 		closeLabel: "Cancel",
 		privateMetadata: JSON.stringify({ channelId: event.channel.id }),
@@ -661,7 +661,7 @@ async function handleCursorCommand(event: {
 
 	const openResult = await event.openModal(modal)
 	if (!openResult) {
-		logger.error("failed to open cursor launch modal")
+		logger.error("failed to open launch modal")
 		await event.channel.postEphemeral(
 			event.user,
 			"Couldn't open the launch form. Please try again.",
@@ -782,7 +782,7 @@ async function handleLaunchFormSubmit(event: {
 		const branchLabel = resolved.branchName ? ` → \`${resolved.branchName}\`` : ""
 		const postResult = await errors.try(
 			event.relatedChannel.post(
-				`*Launching Cursor agent*${modelLabel} on \`${repository}\`${branchLabel}\n\n_"${truncate(prompt, 200)}"_`
+				`*Launching agent*${modelLabel} on \`${repository}\`${branchLabel}\n\n_"${truncate(prompt, 200)}"_`
 			)
 		)
 		if (postResult.error) {
