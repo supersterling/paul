@@ -2,7 +2,22 @@ import { createSlackAdapter } from "@chat-adapter/slack"
 import * as errors from "@superbuilders/errors"
 import * as logger from "@superbuilders/slog"
 import type { Attachment } from "chat"
-import { Actions, type Author, Button, Card, CardText, Chat, type Thread, ThreadImpl } from "chat"
+import {
+	Actions,
+	type Author,
+	Button,
+	Card,
+	CardText,
+	Chat,
+	Modal,
+	type ModalElement,
+	RadioSelect,
+	Select,
+	SelectOption,
+	TextInput,
+	type Thread,
+	ThreadImpl
+} from "chat"
 import { eq } from "drizzle-orm"
 import { db } from "@/db"
 import { cursorAgentThreads } from "@/db/schemas/cursor"
@@ -85,6 +100,28 @@ bot.onAction("cursor-dequeue", async (event) => {
 	}
 })
 
+bot.onSlashCommand("/cursor", async (event) => {
+	const result = await errors.try(handleCursorCommand(event))
+	if (result.error) {
+		logger.error("slash command failed", { error: result.error })
+		await event.channel.postEphemeral(event.user, `*Error:* \`${result.error.message}\``, {
+			fallbackToDM: false
+		})
+	}
+})
+
+bot.onModalSubmit("cursor_launch_form", async (event) => {
+	const result = await errors.try(handleLaunchFormSubmit(event))
+	if (result.error) {
+		logger.error("launch form submit failed", { error: result.error })
+		return {
+			action: "errors" as const,
+			errors: { prompt: `Launch failed: ${result.error.message}` }
+		}
+	}
+	return result.data
+})
+
 async function postError(thread: Thread<unknown>, err: Error): Promise<void> {
 	const postResult = await errors.try(thread.post(`*Error:* \`${err.message}\``))
 	if (postResult.error) {
@@ -99,6 +136,11 @@ async function postWarnings(thread: Thread<unknown>, warnings: string[]): Promis
 	if (postResult.error) {
 		logger.warn("failed to post image warnings", { error: postResult.error })
 	}
+}
+
+function truncate(text: string, maxLength: number): string {
+	if (text.length <= maxLength) return text
+	return `${text.slice(0, maxLength - 3)}...`
 }
 
 async function reactToMessage(
@@ -510,6 +552,250 @@ async function sendFollowup(
 		logger.error("cursor followup api error", { error: detail, agentId })
 		throw errors.new(`cursor followup API: ${detail}`)
 	}
+}
+
+async function handleCursorCommand(event: {
+	text: string
+	user: Author
+	channel: {
+		id: string
+		postEphemeral: (user: Author, msg: string, opts: { fallbackToDM: boolean }) => Promise<unknown>
+	}
+	openModal: (modal: ModalElement) => Promise<{ viewId: string } | undefined>
+}): Promise<void> {
+	logger.info("cursor slash command", { userId: event.user.userId, text: event.text })
+
+	const models = await fetchModels()
+
+	const channelConfig = CHANNEL_REPOS[event.channel.id]
+	const prefilledRepo = channelConfig ? channelConfig.repository : ""
+	const prefilledRef = channelConfig ? channelConfig.ref : ""
+	const prefilledPrompt = event.text.trim()
+
+	const modelOptions = [
+		SelectOption({ label: "Let Cursor choose", value: "__auto__" }),
+		...models.map(function toOption(m: string) {
+			return SelectOption({ label: m, value: m })
+		})
+	]
+
+	const modal = Modal({
+		callbackId: "cursor_launch_form",
+		title: "Launch Cursor Agent",
+		submitLabel: "Launch",
+		closeLabel: "Cancel",
+		privateMetadata: JSON.stringify({ channelId: event.channel.id }),
+		children: [
+			TextInput({
+				id: "prompt",
+				label: "Task",
+				placeholder: "Describe what the agent should do...",
+				multiline: true,
+				...(prefilledPrompt ? { initialValue: prefilledPrompt } : {})
+			}),
+			Select({
+				id: "model",
+				label: "Model",
+				optional: true,
+				initialOption: "__auto__",
+				options: modelOptions
+			}),
+			TextInput({
+				id: "repository",
+				label: "Repository",
+				placeholder: "owner/repo",
+				...(prefilledRepo ? { initialValue: prefilledRepo } : {})
+			}),
+			TextInput({
+				id: "ref",
+				label: "Base Branch",
+				placeholder: "main",
+				optional: true,
+				...(prefilledRef ? { initialValue: prefilledRef } : {})
+			}),
+			TextInput({
+				id: "branchName",
+				label: "Custom Branch Name",
+				placeholder: "feature/my-branch (optional)",
+				optional: true
+			}),
+			RadioSelect({
+				id: "autoCreatePr",
+				label: "Auto-Create PR",
+				initialOption: "true",
+				options: [
+					SelectOption({
+						label: "Yes",
+						value: "true",
+						description: "Create a PR when agent finishes"
+					}),
+					SelectOption({ label: "No", value: "false" })
+				]
+			}),
+			RadioSelect({
+				id: "openAsCursorGithubApp",
+				label: "Open PR as Cursor App",
+				initialOption: "false",
+				optional: true,
+				options: [
+					SelectOption({
+						label: "Yes",
+						value: "true",
+						description: "PR opened by Cursor GitHub App"
+					}),
+					SelectOption({ label: "No", value: "false" })
+				]
+			}),
+			RadioSelect({
+				id: "skipReviewerRequest",
+				label: "Skip Reviewer Request",
+				initialOption: "false",
+				optional: true,
+				options: [
+					SelectOption({ label: "Yes", value: "true", description: "Don't add you as reviewer" }),
+					SelectOption({ label: "No", value: "false" })
+				]
+			})
+		]
+	})
+
+	const openResult = await event.openModal(modal)
+	if (!openResult) {
+		logger.error("failed to open cursor launch modal")
+		await event.channel.postEphemeral(
+			event.user,
+			"Couldn't open the launch form. Please try again.",
+			{ fallbackToDM: false }
+		)
+	}
+}
+
+type ModalFormErrors = { action: "errors"; errors: Record<string, string> }
+type ValidatedLaunchForm = { prompt: string; repository: string }
+
+const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/
+
+function validateLaunchForm(values: Record<string, string>): ModalFormErrors | ValidatedLaunchForm {
+	const { prompt, repository } = values
+
+	if (!prompt || prompt.trim().length === 0) {
+		return { action: "errors", errors: { prompt: "Task description is required" } }
+	}
+
+	if (!repository || repository.trim().length === 0) {
+		return { action: "errors", errors: { repository: "Repository is required" } }
+	}
+
+	if (!REPO_PATTERN.test(repository.trim())) {
+		return { action: "errors", errors: { repository: "Must be owner/repo format" } }
+	}
+
+	return { prompt: prompt.trim(), repository: repository.trim() }
+}
+
+function isFormErrors(result: ModalFormErrors | ValidatedLaunchForm): result is ModalFormErrors {
+	return "action" in result
+}
+
+function resolveLaunchFields(values: Record<string, string>): {
+	model: string | undefined
+	branchName: string | undefined
+	ref: string
+	autoCreatePr: boolean | undefined
+	openAsCursorGithubApp: boolean | undefined
+	skipReviewerRequest: boolean | undefined
+} {
+	const resolvedModel = values.model && values.model !== "__auto__" ? values.model : undefined
+	const resolvedBranch = values.branchName?.trim() ? values.branchName.trim() : undefined
+	const resolvedRef = values.ref?.trim() ? values.ref.trim() : "main"
+	const resolvedAutoCreatePr = values.autoCreatePr ? values.autoCreatePr === "true" : undefined
+	const resolvedOpenAs = values.openAsCursorGithubApp
+		? values.openAsCursorGithubApp === "true"
+		: undefined
+	const resolvedSkip = values.skipReviewerRequest
+		? values.skipReviewerRequest === "true"
+		: undefined
+
+	return {
+		model: resolvedModel,
+		branchName: resolvedBranch,
+		ref: resolvedRef,
+		autoCreatePr: resolvedAutoCreatePr,
+		openAsCursorGithubApp: resolvedOpenAs,
+		skipReviewerRequest: resolvedSkip
+	}
+}
+
+async function handleLaunchFormSubmit(event: {
+	values: Record<string, string>
+	user: Author
+	privateMetadata?: string
+	relatedChannel?: { id: string; post: (msg: string) => Promise<unknown> }
+}): Promise<ModalFormErrors | undefined> {
+	const validated = validateLaunchForm(event.values)
+	if (isFormErrors(validated)) return validated
+
+	const { prompt, repository } = validated
+	const resolved = resolveLaunchFields(event.values)
+
+	const metadata = event.privateMetadata ? JSON.parse(event.privateMetadata) : {}
+	const channelId = metadata.channelId
+
+	const composedPrompt = await composeWorkflowPrompt(repository, prompt, event.user.userId)
+
+	const threadId = channelId
+		? `slack:${channelId}:modal-${Date.now()}`
+		: `slack:modal-${Date.now()}`
+
+	await inngest.send({
+		name: "cursor/agent.launch",
+		data: {
+			prompt: composedPrompt,
+			repository,
+			ref: resolved.ref,
+			threadId,
+			images: [],
+			model: resolved.model,
+			branchName: resolved.branchName,
+			autoCreatePr: resolved.autoCreatePr,
+			openAsCursorGithubApp: resolved.openAsCursorGithubApp,
+			skipReviewerRequest: resolved.skipReviewerRequest
+		}
+	})
+
+	if (event.relatedChannel) {
+		const modelLabel = resolved.model ? ` (${resolved.model})` : ""
+		const branchLabel = resolved.branchName ? ` → \`${resolved.branchName}\`` : ""
+		await event.relatedChannel.post(
+			`*Launching Cursor agent*${modelLabel} on \`${repository}\`${branchLabel}\n\n_"${truncate(prompt, 200)}"_`
+		)
+	}
+
+	const modelLog = resolved.model ? resolved.model : "auto"
+	logger.info("cursor agent launched from modal", {
+		userId: event.user.userId,
+		repository,
+		model: modelLog
+	})
+
+	return undefined
+}
+
+async function fetchModels(): Promise<string[]> {
+	const apiKey = env.CURSOR_API_KEY
+	if (!apiKey) {
+		logger.warn("CURSOR_API_KEY not set, returning empty model list")
+		return []
+	}
+
+	const client = createCursorClient(apiKey)
+	const { data, error } = await client.GET("/v0/models")
+	if (error) {
+		logger.warn("failed to fetch cursor models", { error: JSON.stringify(error) })
+		return []
+	}
+
+	return data.models
 }
 
 function thread(threadId: string): Thread {
