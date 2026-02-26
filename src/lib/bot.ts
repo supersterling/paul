@@ -755,21 +755,27 @@ async function handleLaunchFormSubmit(event: {
 		? `slack:${channelId}:modal-${Date.now()}`
 		: `slack:modal-${Date.now()}`
 
-	await inngest.send({
-		name: "cursor/agent.launch",
-		data: {
-			prompt: composedPrompt,
-			repository,
-			ref: resolved.ref,
-			threadId,
-			images: [],
-			model: resolved.model,
-			branchName: resolved.branchName,
-			autoCreatePr: resolved.autoCreatePr,
-			openAsCursorGithubApp: resolved.openAsCursorGithubApp,
-			skipReviewerRequest: resolved.skipReviewerRequest
-		}
-	})
+	const sendResult = await errors.try(
+		inngest.send({
+			name: "cursor/agent.launch",
+			data: {
+				prompt: composedPrompt,
+				repository,
+				ref: resolved.ref,
+				threadId,
+				images: [],
+				model: resolved.model,
+				branchName: resolved.branchName,
+				autoCreatePr: resolved.autoCreatePr,
+				openAsCursorGithubApp: resolved.openAsCursorGithubApp,
+				skipReviewerRequest: resolved.skipReviewerRequest
+			}
+		})
+	)
+	if (sendResult.error) {
+		logger.error("failed to send inngest event", { error: sendResult.error })
+		return { action: "errors", errors: { prompt: "Failed to launch agent. Please try again." } }
+	}
 
 	if (event.relatedChannel) {
 		const modelLabel = resolved.model ? ` (${resolved.model})` : ""
