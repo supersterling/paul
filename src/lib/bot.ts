@@ -738,8 +738,16 @@ async function handleLaunchFormSubmit(event: {
 	const { prompt, repository } = validated
 	const resolved = resolveLaunchFields(event.values)
 
-	const metadata = event.privateMetadata ? JSON.parse(event.privateMetadata) : {}
-	const channelId = metadata.channelId
+	let channelId: string | undefined
+	if (event.privateMetadata) {
+		const raw = event.privateMetadata
+		const parseResult = errors.trySync(() => JSON.parse(raw))
+		if (parseResult.error) {
+			logger.warn("failed to parse modal metadata", { error: parseResult.error })
+		} else {
+			channelId = parseResult.data.channelId
+		}
+	}
 
 	const composedPrompt = await composeWorkflowPrompt(repository, prompt, event.user.userId)
 
@@ -766,9 +774,14 @@ async function handleLaunchFormSubmit(event: {
 	if (event.relatedChannel) {
 		const modelLabel = resolved.model ? ` (${resolved.model})` : ""
 		const branchLabel = resolved.branchName ? ` → \`${resolved.branchName}\`` : ""
-		await event.relatedChannel.post(
-			`*Launching Cursor agent*${modelLabel} on \`${repository}\`${branchLabel}\n\n_"${truncate(prompt, 200)}"_`
+		const postResult = await errors.try(
+			event.relatedChannel.post(
+				`*Launching Cursor agent*${modelLabel} on \`${repository}\`${branchLabel}\n\n_"${truncate(prompt, 200)}"_`
+			)
 		)
+		if (postResult.error) {
+			logger.warn("failed to post launch confirmation", { error: postResult.error })
+		}
 	}
 
 	const modelLog = resolved.model ? resolved.model : "auto"
