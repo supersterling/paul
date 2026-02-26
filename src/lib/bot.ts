@@ -764,7 +764,7 @@ async function handleLaunchFormSubmit(event: {
 	}
 
 	const sentMessage = postResult.data
-	const threadId = sentMessage.threadId
+	const threadId = `${event.relatedChannel.id}:${sentMessage.id}`
 
 	const t = thread(threadId)
 	await t.subscribe()
