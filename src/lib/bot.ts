@@ -27,7 +27,7 @@ import { createCursorClient } from "@/lib/clients/cursor/client"
 import { composeWorkflowPrompt } from "@/lib/prompt-compose"
 import { dequeue, ErrQueueFull, enqueue, MAX_QUEUE_SIZE, pendingCount } from "@/lib/queue"
 import type { CursorImage } from "@/lib/slack-images"
-import { extractImages, parseCursorImages } from "@/lib/slack-images"
+import { extractAttachments, parseCursorImages } from "@/lib/slack-images"
 import { createPostgresState } from "@/lib/state-postgres"
 
 const DEFAULT_REPOSITORY = "incept-team/incept"
@@ -203,12 +203,14 @@ async function handleNewMention(thread: Thread, message: IncomingMessage): Promi
 		logger.warn("failed to react to mention", { error: reactResult.error })
 	}
 
-	const { images, warnings } = await extractImages(message.attachments)
+	const { images, fileContents, warnings } = await extractAttachments(message.attachments)
 	await postWarnings(thread, warnings)
+
+	const enrichedPrompt = fileContents ? `${fileContents}\n\n${prompt}` : prompt
 
 	const composedPrompt = await composeWorkflowPrompt(
 		config.repository,
-		prompt,
+		enrichedPrompt,
 		message.author.userId
 	)
 
@@ -245,8 +247,10 @@ async function handleSubscribedMessage(thread: Thread, message: IncomingMessage)
 
 	await reactToMessage(thread, message.id, "see_no_evil", "add")
 
-	const { images, warnings } = await extractImages(message.attachments)
+	const { images, fileContents, warnings } = await extractAttachments(message.attachments)
 	await postWarnings(thread, warnings)
+
+	const enrichedFollowup = fileContents ? `${fileContents}\n\n${followupText}` : followupText
 
 	const rows = await db
 		.select({
@@ -276,7 +280,7 @@ async function handleSubscribedMessage(thread: Thread, message: IncomingMessage)
 		await db
 			.update(cursorAgentThreads)
 			.set({
-				pendingFollowup: followupText,
+				pendingFollowup: enrichedFollowup,
 				pendingFollowupImages: followupImages
 			})
 			.where(eq(cursorAgentThreads.threadId, thread.id))
@@ -319,7 +323,7 @@ async function handleSubscribedMessage(thread: Thread, message: IncomingMessage)
 		return
 	}
 
-	await sendFollowup(apiKey, row.agentId, followupText, images)
+	await sendFollowup(apiKey, row.agentId, enrichedFollowup, images)
 
 	await inngest.send({
 		name: "cursor/followup.sent",
