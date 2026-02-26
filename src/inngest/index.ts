@@ -132,7 +132,12 @@ const schema = {
 		repository: z.string().min(1),
 		ref: z.string().min(1),
 		threadId: z.string().min(1),
-		images: CursorImageArraySchema
+		images: CursorImageArraySchema,
+		model: z.string().min(1).optional(),
+		branchName: z.string().min(1).optional(),
+		autoCreatePr: z.boolean().optional(),
+		openAsCursorGithubApp: z.boolean().optional(),
+		skipReviewerRequest: z.boolean().optional()
 	}),
 	"cursor/followup.sent": z.object({
 		agentId: z.string().min(1),
