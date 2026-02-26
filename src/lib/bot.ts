@@ -733,7 +733,12 @@ async function handleLaunchFormSubmit(event: {
 	values: Record<string, string>
 	user: Author
 	privateMetadata?: string
-	relatedChannel?: { id: string; post: (msg: string) => Promise<unknown> }
+	relatedChannel?: {
+		id: string
+		post: (
+			msg: string
+		) => Promise<{ id: string; threadId: string; addReaction: (emoji: string) => Promise<void> }>
+	}
 }): Promise<ModalFormErrors | undefined> {
 	const validated = validateLaunchForm(event.values)
 	if (isFormErrors(validated)) return validated
@@ -741,22 +746,33 @@ async function handleLaunchFormSubmit(event: {
 	const { prompt, repository } = validated
 	const resolved = resolveLaunchFields(event.values)
 
-	let channelId: string | undefined
-	if (event.privateMetadata) {
-		const raw = event.privateMetadata
-		const parseResult = errors.trySync(() => JSON.parse(raw))
-		if (parseResult.error) {
-			logger.warn("failed to parse modal metadata", { error: parseResult.error })
-		} else {
-			channelId = parseResult.data.channelId
-		}
+	if (!event.relatedChannel) {
+		logger.error("no related channel on modal submit")
+		return { action: "errors", errors: { prompt: "Could not determine channel. Try again." } }
 	}
 
 	const composedPrompt = await composeWorkflowPrompt(repository, prompt, event.user.userId)
 
-	const threadId = channelId
-		? `slack:${channelId}:modal-${Date.now()}`
-		: `slack:modal-${Date.now()}`
+	const modelLabel = resolved.model ? ` (${resolved.model})` : ""
+	const branchLabel = resolved.branchName ? ` → \`${resolved.branchName}\`` : ""
+	const confirmationText = `*Launching agent*${modelLabel} on \`${repository}\`${branchLabel}\n\n_"${truncate(prompt, 200)}"_`
+
+	const postResult = await errors.try(event.relatedChannel.post(confirmationText))
+	if (postResult.error) {
+		logger.error("failed to post launch message", { error: postResult.error })
+		return { action: "errors", errors: { prompt: "Failed to post to channel. Try again." } }
+	}
+
+	const sentMessage = postResult.data
+	const threadId = sentMessage.threadId
+
+	const t = thread(threadId)
+	await t.subscribe()
+
+	const reactResult = await errors.try(sentMessage.addReaction("one-sec-cooking"))
+	if (reactResult.error) {
+		logger.warn("failed to react to launch message", { error: reactResult.error })
+	}
 
 	const sendResult = await errors.try(
 		inngest.send({
@@ -780,24 +796,12 @@ async function handleLaunchFormSubmit(event: {
 		return { action: "errors", errors: { prompt: "Failed to launch agent. Please try again." } }
 	}
 
-	if (event.relatedChannel) {
-		const modelLabel = resolved.model ? ` (${resolved.model})` : ""
-		const branchLabel = resolved.branchName ? ` → \`${resolved.branchName}\`` : ""
-		const postResult = await errors.try(
-			event.relatedChannel.post(
-				`*Launching agent*${modelLabel} on \`${repository}\`${branchLabel}\n\n_"${truncate(prompt, 200)}"_`
-			)
-		)
-		if (postResult.error) {
-			logger.warn("failed to post launch confirmation", { error: postResult.error })
-		}
-	}
-
 	const modelLog = resolved.model ? resolved.model : "auto"
-	logger.info("cursor agent launched from modal", {
+	logger.info("agent launched from modal", {
 		userId: event.user.userId,
 		repository,
-		model: modelLog
+		model: modelLog,
+		threadId
 	})
 
 	return undefined
