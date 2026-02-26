@@ -30,8 +30,11 @@ import type { CursorImage } from "@/lib/slack-images"
 import { extractImages, parseCursorImages } from "@/lib/slack-images"
 import { createPostgresState } from "@/lib/state-postgres"
 
+const DEFAULT_REPOSITORY = "incept-team/incept"
+const DEFAULT_REF = "main"
+
 const CHANNEL_REPOS: Record<string, { repository: string; ref: string }> = {
-	C0AHSQHA5A4: { repository: "incept-team/incept", ref: "main" }
+	C0AHSQHA5A4: { repository: DEFAULT_REPOSITORY, ref: DEFAULT_REF }
 }
 
 const bot = new Chat({
@@ -568,8 +571,8 @@ async function handleCursorCommand(event: {
 	const models = await fetchModels()
 
 	const channelConfig = CHANNEL_REPOS[event.channel.id]
-	const prefilledRepo = channelConfig ? channelConfig.repository : ""
-	const prefilledRef = channelConfig ? channelConfig.ref : ""
+	const prefilledRepo = channelConfig ? channelConfig.repository : "incept-team/incept"
+	const prefilledRef = channelConfig ? channelConfig.ref : DEFAULT_REF
 	const prefilledPrompt = event.text.trim()
 
 	const modelOptions = [
@@ -604,6 +607,7 @@ async function handleCursorCommand(event: {
 				id: "repository",
 				label: "Repository",
 				placeholder: "owner/repo",
+				optional: true,
 				...(prefilledRepo ? { initialValue: prefilledRepo } : {})
 			}),
 			TextInput({
@@ -682,15 +686,14 @@ function validateLaunchForm(values: Record<string, string>): ModalFormErrors | V
 		return { action: "errors", errors: { prompt: "Task description is required" } }
 	}
 
-	if (!repository || repository.trim().length === 0) {
-		return { action: "errors", errors: { repository: "Repository is required" } }
-	}
+	const resolvedRepo =
+		repository && repository.trim().length > 0 ? repository.trim() : DEFAULT_REPOSITORY
 
-	if (!REPO_PATTERN.test(repository.trim())) {
+	if (!REPO_PATTERN.test(resolvedRepo)) {
 		return { action: "errors", errors: { repository: "Must be owner/repo format" } }
 	}
 
-	return { prompt: prompt.trim(), repository: repository.trim() }
+	return { prompt: prompt.trim(), repository: resolvedRepo }
 }
 
 function isFormErrors(result: ModalFormErrors | ValidatedLaunchForm): result is ModalFormErrors {
@@ -707,7 +710,7 @@ function resolveLaunchFields(values: Record<string, string>): {
 } {
 	const resolvedModel = values.model && values.model !== "__auto__" ? values.model : undefined
 	const resolvedBranch = values.branchName?.trim() ? values.branchName.trim() : undefined
-	const resolvedRef = values.ref?.trim() ? values.ref.trim() : "main"
+	const resolvedRef = values.ref?.trim() ? values.ref.trim() : DEFAULT_REF
 	const resolvedAutoCreatePr = values.autoCreatePr ? values.autoCreatePr === "true" : undefined
 	const resolvedOpenAs = values.openAsCursorGithubApp
 		? values.openAsCursorGithubApp === "true"
