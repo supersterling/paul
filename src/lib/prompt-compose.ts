@@ -4,6 +4,7 @@ import { db } from "@/db"
 import {
 	promptPhaseOverrides,
 	promptPhases,
+	promptRepoPhases,
 	promptUserOverrides,
 	promptUserPhases
 } from "@/db/schemas/prompt"
@@ -23,18 +24,29 @@ const RESPONSE_STYLE_SECTION: PromptSection = {
 	position: -1
 }
 
-async function resolvePhaseOrder(slackUserId: string | undefined): Promise<string[]> {
-	if (!slackUserId) return PHASE_ORDER
+async function resolvePhaseOrder(
+	repository: string,
+	slackUserId: string | undefined
+): Promise<string[]> {
+	const userPhases = slackUserId
+		? await db
+				.select({ phase: promptUserPhases.phase })
+				.from(promptUserPhases)
+				.where(eq(promptUserPhases.slackUserId, slackUserId))
+				.orderBy(asc(promptUserPhases.position))
+		: []
 
-	const userPhases = await db
-		.select({ phase: promptUserPhases.phase })
-		.from(promptUserPhases)
-		.where(eq(promptUserPhases.slackUserId, slackUserId))
-		.orderBy(asc(promptUserPhases.position))
+	if (userPhases.length > 0) return userPhases.map((p) => p.phase)
 
-	if (userPhases.length === 0) return PHASE_ORDER
+	const repoPhases = await db
+		.select({ phase: promptRepoPhases.phase })
+		.from(promptRepoPhases)
+		.where(eq(promptRepoPhases.repository, repository))
+		.orderBy(asc(promptRepoPhases.position))
 
-	return userPhases.map((p) => p.phase)
+	if (repoPhases.length > 0) return repoPhases.map((p) => p.phase)
+
+	return PHASE_ORDER
 }
 
 async function composeWorkflowPrompt(
@@ -42,7 +54,7 @@ async function composeWorkflowPrompt(
 	featureRequest: string,
 	slackUserId?: string
 ): Promise<string> {
-	const phases = await resolvePhaseOrder(slackUserId)
+	const phases = await resolvePhaseOrder(repository, slackUserId)
 
 	logger.debug("composing workflow prompt", {
 		repository,
@@ -52,9 +64,7 @@ async function composeWorkflowPrompt(
 
 	const blocks: string[] = []
 
-	blocks.push(
-		`## ${RESPONSE_STYLE_SECTION.header}\n\n${RESPONSE_STYLE_SECTION.content}`
-	)
+	blocks.push(`## ${RESPONSE_STYLE_SECTION.header}\n\n${RESPONSE_STYLE_SECTION.content}`)
 
 	for (const phase of phases) {
 		const baseSections = await db
