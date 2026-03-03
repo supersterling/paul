@@ -109,6 +109,97 @@ async function getHeadSha(
 	return parsed.data.sha
 }
 
+function parsePrNumber(prUrl: string, logger: Logger): number {
+	const match = prUrl.match(/\/pull\/(\d+)$/)
+	if (!match || !match[1]) {
+		logger.error("failed to parse pr number from url", { prUrl })
+		throw new NonRetriableError(`invalid pr url format: ${prUrl}`)
+	}
+	return Number.parseInt(match[1], 10)
+}
+
+type MergeOutcome = "merged" | "already_merged" | "not_mergeable"
+
+const MergeResponseSchema = z.object({
+	merged: z.boolean(),
+	message: z.string()
+})
+
+async function mergePr(
+	owner: string,
+	repo: string,
+	prNumber: number,
+	token: string,
+	logger: Logger
+): Promise<MergeOutcome> {
+	const url = `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/merge`
+
+	const fetchResult = await errors.try(
+		fetch(url, {
+			method: "PUT",
+			headers: {
+				Authorization: `Bearer ${token}`,
+				Accept: "application/vnd.github+json",
+				"X-GitHub-Api-Version": "2022-11-28",
+				"Content-Type": "application/json"
+			},
+			body: JSON.stringify({ merge_method: "squash" })
+		})
+	)
+	if (fetchResult.error) {
+		logger.error("github merge fetch failed", { error: fetchResult.error, owner, repo, prNumber })
+		throw errors.wrap(fetchResult.error, "github merge fetch")
+	}
+
+	const response = fetchResult.data
+
+	if (response.status === 405) {
+		logger.info("pr not mergeable", { owner, repo, prNumber, status: 405 })
+		return "not_mergeable"
+	}
+
+	if (response.status === 404 || response.status === 409) {
+		logger.info("pr already merged or closed", { owner, repo, prNumber, status: response.status })
+		return "already_merged"
+	}
+
+	if (!response.ok) {
+		const textResult = await errors.try(response.text())
+		if (textResult.error) {
+			logger.error("failed reading github merge error response", {
+				error: textResult.error,
+				status: response.status
+			})
+			throw errors.wrap(textResult.error, "github merge error response")
+		}
+
+		logger.error("github merge api returned error", {
+			status: response.status,
+			body: textResult.data
+		})
+		throw errors.new(`github merge api ${response.status}: ${textResult.data}`)
+	}
+
+	const jsonResult = await errors.try(response.json())
+	if (jsonResult.error) {
+		logger.error("failed parsing github merge json", { error: jsonResult.error })
+		throw errors.wrap(jsonResult.error, "github merge response json")
+	}
+
+	const parsed = MergeResponseSchema.safeParse(jsonResult.data)
+	if (!parsed.success) {
+		logger.error("invalid github merge response", { error: parsed.error })
+		throw errors.wrap(parsed.error, "github merge response validation")
+	}
+
+	if (!parsed.data.merged) {
+		logger.warn("merge response says not merged", { message: parsed.data.message })
+		return "not_mergeable"
+	}
+
+	return "merged"
+}
+
 type StabilizeParams = {
 	owner: string
 	repo: string
@@ -253,26 +344,13 @@ const prStabilize = inngest.createFunction(
 			return getHeadSha(params.owner, params.repo, params.branchName, token, logger)
 		})
 
-		await step.run("handle-result", async () => {
-			const t = thread(params.threadId)
-			const linkLine = buildSlackLinks(params.prUrl, params.agentUrl)
+		const isStable = beforeSha === afterSha
 
-			if (beforeSha === afterSha) {
-				logger.info("pr stable", { branch: params.branchName, sha: afterSha, cycle: params.cycle })
+		if (!isStable && params.cycle >= MAX_CYCLES) {
+			await step.run("post-gave-up", async () => {
+				const t = thread(params.threadId)
+				const linkLine = buildSlackLinks(params.prUrl, params.agentUrl)
 
-				const message = [
-					"*PR Stable*",
-					"",
-					`No new commits on \`${params.branchName}\` in the last 10 minutes.`,
-					"",
-					linkLine
-				].join("\n")
-
-				await postToThread(t, message, logger, "post stable message to slack")
-				return
-			}
-
-			if (params.cycle >= MAX_CYCLES) {
 				logger.warn("max stabilize cycles reached", {
 					branch: params.branchName,
 					cycle: params.cycle,
@@ -289,16 +367,121 @@ const prStabilize = inngest.createFunction(
 				].join("\n")
 
 				await postToThread(t, message, logger, "post max-cycles message to slack")
+			})
+
+			return { branch: params.branchName, stable: false, merged: false, cycle: params.cycle }
+		}
+
+		if (!isStable) {
+			await step.run("re-cycle", async () => {
+				logger.info("new commits detected, re-cycling", {
+					branch: params.branchName,
+					beforeSha,
+					afterSha,
+					cycle: params.cycle,
+					nextCycle: params.cycle + 1
+				})
+
+				const sendResult = await errors.try(
+					inngest.send({
+						name: "cursor/pr.stabilize",
+						data: {
+							repository: params.repository,
+							branchName: params.branchName,
+							prUrl: params.prUrl,
+							threadId: params.threadId,
+							agentUrl: params.agentUrl,
+							headSha: afterSha,
+							cycle: params.cycle + 1
+						}
+					})
+				)
+				if (sendResult.error) {
+					logger.error("failed to emit stabilize event", { error: sendResult.error })
+					throw errors.wrap(sendResult.error, "emit pr.stabilize event")
+				}
+			})
+
+			return { branch: params.branchName, stable: false, merged: false, cycle: params.cycle }
+		}
+
+		await step.run("post-stable", async () => {
+			const t = thread(params.threadId)
+			const linkLine = buildSlackLinks(params.prUrl, params.agentUrl)
+
+			logger.info("pr stable", { branch: params.branchName, sha: afterSha, cycle: params.cycle })
+
+			const message = [
+				"*PR Stable*",
+				"",
+				`No new commits on \`${params.branchName}\` in the last 10 minutes.`,
+				"",
+				linkLine
+			].join("\n")
+
+			await postToThread(t, message, logger, "post stable message to slack")
+		})
+
+		if (!params.prUrl) {
+			logger.info("no pr url, skipping merge", { branch: params.branchName })
+			return { branch: params.branchName, stable: true, merged: false, cycle: params.cycle }
+		}
+
+		const prNumber = parsePrNumber(params.prUrl, logger)
+
+		const mergeOutcome = await step.run("merge-pr", async () => {
+			logger.info("attempting squash merge", {
+				owner: params.owner,
+				repo: params.repo,
+				prNumber,
+				branch: params.branchName
+			})
+			return mergePr(params.owner, params.repo, prNumber, token, logger)
+		})
+
+		await step.run("post-merge-result", async () => {
+			const t = thread(params.threadId)
+
+			if (mergeOutcome === "merged") {
+				logger.info("pr merged", { prNumber, branch: params.branchName })
+				const message = [
+					"*Merged*",
+					"",
+					`Squash-merged <${params.prUrl}|PR #${prNumber}> into main.`
+				].join("\n")
+				await postToThread(t, message, logger, "post merge success to slack")
 				return
 			}
 
-			logger.info("new commits detected, re-cycling", {
+			if (mergeOutcome === "already_merged") {
+				logger.info("pr already merged", { prNumber, branch: params.branchName })
+				const message = [
+					"*Already Merged*",
+					"",
+					`<${params.prUrl}|PR #${prNumber}> was already merged.`
+				].join("\n")
+				await postToThread(t, message, logger, "post already merged to slack")
+				return
+			}
+
+			logger.info("pr not mergeable, re-cycling", {
+				prNumber,
 				branch: params.branchName,
-				beforeSha,
-				afterSha,
-				cycle: params.cycle,
-				nextCycle: params.cycle + 1
+				cycle: params.cycle
 			})
+
+			if (params.cycle >= MAX_CYCLES) {
+				const linkLine = buildSlackLinks(params.prUrl, params.agentUrl)
+				const message = [
+					"*Merge Failed*",
+					"",
+					`<${params.prUrl}|PR #${prNumber}> is not mergeable (checks failing or conflicts). Giving up after ${MAX_CYCLES * 10} minutes.`,
+					"",
+					linkLine
+				].join("\n")
+				await postToThread(t, message, logger, "post merge failed to slack")
+				return
+			}
 
 			const sendResult = await errors.try(
 				inngest.send({
@@ -315,12 +498,13 @@ const prStabilize = inngest.createFunction(
 				})
 			)
 			if (sendResult.error) {
-				logger.error("failed to emit stabilize event", { error: sendResult.error })
-				throw errors.wrap(sendResult.error, "emit pr.stabilize event")
+				logger.error("failed to emit stabilize event for merge retry", { error: sendResult.error })
+				throw errors.wrap(sendResult.error, "emit pr.stabilize for merge retry")
 			}
 		})
 
-		return { branch: params.branchName, stable: beforeSha === afterSha, cycle: params.cycle }
+		const merged = mergeOutcome !== "not_mergeable"
+		return { branch: params.branchName, stable: true, merged, cycle: params.cycle }
 	}
 )
 
