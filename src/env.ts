@@ -30,6 +30,7 @@ const env = createEnv({
 		NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 		GITHUB_PAT_TOKEN: z.string().optional(),
 		SLACK_BOT_TOKEN: z.string().optional(),
+		SLACK_BOT_USER_ID: z.string().optional(),
 		SLACK_SIGNING_SECRET: z.string().optional(),
 		INNGEST_WEBHOOK_URL: z.string().url().optional(),
 		CURSOR_API_KEY: z.string().optional()
@@ -61,6 +62,7 @@ const env = createEnv({
 		NODE_ENV: process.env.NODE_ENV,
 		GITHUB_PAT_TOKEN: process.env.GITHUB_PAT_TOKEN,
 		SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN,
+		SLACK_BOT_USER_ID: process.env.SLACK_BOT_USER_ID,
 		SLACK_SIGNING_SECRET: process.env.SLACK_SIGNING_SECRET,
 		INNGEST_WEBHOOK_URL: process.env.INNGEST_WEBHOOK_URL,
 		CURSOR_API_KEY: process.env.CURSOR_API_KEY

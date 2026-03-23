@@ -34,7 +34,8 @@ const DEFAULT_REPOSITORY = "incept-team/incept"
 const DEFAULT_REF = "main"
 
 const CHANNEL_REPOS: Record<string, { repository: string; ref: string }> = {
-	C0AHSQHA5A4: { repository: DEFAULT_REPOSITORY, ref: DEFAULT_REF }
+	C0AHSQHA5A4: { repository: DEFAULT_REPOSITORY, ref: DEFAULT_REF },
+	C0AMNLWS8S1: { repository: DEFAULT_REPOSITORY, ref: DEFAULT_REF }
 }
 
 const bot = new Chat({
@@ -172,13 +173,18 @@ type IncomingMessage = {
 	}
 }
 
-const BOT_USER_ID = "U0AGS2FM1NX"
+const BOT_USER_ID = env.SLACK_BOT_USER_ID ?? "U0AGS2FM1NX"
 const BOT_MENTION_PATTERN = new RegExp(`^@${BOT_USER_ID}`)
 const USER_MENTION_PATTERN = /@(?!here\b|channel\b|everyone\b)\S+/g
 
+if (!env.SLACK_BOT_USER_ID) {
+	logger.warn("SLACK_BOT_USER_ID not set, using hardcoded fallback", { botUserId: BOT_USER_ID })
+}
+
 async function handleNewMention(thread: Thread, message: IncomingMessage): Promise<void> {
+	logger.debug("mention received", { threadId: thread.id, text: message.text, botUserId: BOT_USER_ID })
 	if (!BOT_MENTION_PATTERN.test(message.text)) {
-		logger.debug("ignoring non-leading mention", { threadId: thread.id })
+		logger.debug("ignoring non-leading mention", { threadId: thread.id, text: message.text })
 		return
 	}
 
